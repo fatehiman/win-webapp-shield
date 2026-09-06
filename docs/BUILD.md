@@ -136,10 +136,10 @@ Add `-KeepFiles` to keep the temporary folders (with any `app.error.log`) for a 
 `windows-latest` for every push, and uploads `dist` as a build artifact. Pushing a tag
 like `v1.0.0` also creates a GitHub release with a zip attached.
 
-The encryption round trip and the `setup.exe` check are hard gates there. The smoke
-test also runs, but only for information: a hosted runner does not promise a usable
-desktop session, so window checks can fail for reasons that have nothing to do with
-the code. Run it on a real desktop before cutting a release.
+The encryption round trip, the `setup.exe` check and the 50 fast smoke-test checks are
+all hard gates there — the hosted Windows runner does give a real desktop session, so
+the window checks work. The sleep/wake test (`-IncludeSlow`) needs minutes of real
+waiting, so run that one locally before cutting a release.
 
 ## Regenerating the icon
 

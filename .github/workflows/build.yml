@@ -56,10 +56,10 @@ jobs:
           exit 0
 
       - name: Smoke test the wrapper
-        # Informational: this starts real windows and reads their Win32 styles. Hosted
-        # runners do not guarantee a usable desktop session, so a failure here is not
-        # treated as a broken build. Run it locally before a release.
-        continue-on-error: true
+        # Starts the real exe with 14 different .conf files and reads back what
+        # Windows created. The hosted runner does give a usable desktop session,
+        # so all 50 fast checks run here. The sleep/wake test (-IncludeSlow) takes
+        # minutes of real waiting and is left for a local run before a release.
         shell: pwsh
         run: ./tools/smoke-test.ps1
 
