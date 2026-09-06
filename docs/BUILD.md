@@ -84,6 +84,7 @@ src/WebAppShield/     the wrapper: WinForms window + WebView2 + tray + sleep log
   SessionStore.cs       the .session scratch file
   MainForm.cs           the window, the tray, sleep and wake
   SleepManager.cs       when to drop the browser
+  LoadingIndicator.cs   the title bar spinner shown while a page loads
   MonitorHelper.cs      monitor numbering and placement
   SingleInstance.cs     the per-exe-path lock
   Dialogs.cs            error boxes and the WebView2-missing dialog
@@ -112,11 +113,11 @@ can never disagree about the file format.
 .\tools\smoke-test.ps1 -IncludeSlow # about 4 minutes, adds the sleep/wake test
 ```
 
-The script starts the real exe with 14 different `.conf` files and checks what Windows
+The script starts the real exe with 16 different `.conf` files and checks what Windows
 actually created: window styles read back with `GetWindowLong`, whether the close
 button carries `CS_NOCLOSE`, window size and position in pixels, process exit codes,
-the `.session` file contents, the `WASENC1` header, and the browser child processes
-before and after a sleep. Nothing is mocked.
+the `.session` file contents, the `WASENC1` header, every frame of the loading
+spinner, and the browser child processes before and after a sleep. Nothing is mocked.
 
 ```
 == 14. sleep-after frees the browser while the window is hidden
@@ -125,7 +126,7 @@ before and after a sleep. Nothing is mocked.
   [pass] memory dropped (56.9 MB -> 10.5 MB)
   [pass] opening it again restarted the browser (found 1)
 
-passed: 57   failed: 0
+passed: 62   failed: 0
 ```
 
 Add `-KeepFiles` to keep the temporary folders (with any `app.error.log`) for a look.
@@ -136,7 +137,7 @@ Add `-KeepFiles` to keep the temporary folders (with any `app.error.log`) for a 
 `windows-latest` for every push, and uploads `dist` as a build artifact. Pushing a tag
 like `v1.0.0` also creates a GitHub release with a zip attached.
 
-The encryption round trip, the `setup.exe` check and the 50 fast smoke-test checks are
+The encryption round trip, the `setup.exe` check and the 55 fast smoke-test checks are
 all hard gates there — the hosted Windows runner does give a real desktop session, so
 the window checks work. The sleep/wake test (`-IncludeSlow`) needs minutes of real
 waiting, so run that one locally before cutting a release.

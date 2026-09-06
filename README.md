@@ -28,6 +28,7 @@ mstodo.session    <- written by the app: last window position (optional)
 | **Monitor & position** | Pick a monitor, centre it, or remember where the user left it. |
 | **Starts hidden** | `"window-state": "tray"` never draws the window, not even for a moment. |
 | **Frees memory** | Drops the whole browser after the window has been out of sight for a while. |
+| **Loading spinner** | `| / - \` after the title while a page loads, DOS style. |
 
 ---
 
@@ -101,6 +102,25 @@ bar, not a drawn copy.
 - Tray **on** → X hides the window to the tray, like most tray apps. Quit from the
   tray menu → *Exit*.
 - Force it either way with `"close-action": "tray"` or `"exit"`.
+
+---
+
+## Telling the user it is busy
+
+A wrapped web app has no address bar and no browser throbber, so a slow page just
+looks frozen. `loading-indicator` fixes that with the oldest trick there is:
+
+```
+Microsoft To Do  |        Microsoft To Do  /
+Microsoft To Do  -        Microsoft To Do  ```
+
+One frame every 120 ms after the window title. The same animation appears in the
+middle of the window (`Loading  /`) until the first page has something to draw, and
+the tray tooltip says `Microsoft To Do - loading...` while it is busy.
+
+Styles: `spinner` (the ASCII default), `bar` (`[=   ]` bouncing, DOS file manager
+style), `dots`, `braille`, or `off`. It gives up after 60 seconds so a single page app
+that never says "finished" cannot leave the title spinning for ever.
 
 ---
 
@@ -186,7 +206,7 @@ cd win-webapp-shield
 Needs the .NET SDK 8.0 or newer. Everything lands in `.\dist`.
 See [docs/BUILD.md](docs/BUILD.md) for the details.
 
-To check a build, `.\tools\smoke-test.ps1` starts the real exe with 14 different
+To check a build, `.\tools\smoke-test.ps1` starts the real exe with 16 different
 config files and inspects the windows Windows actually created — styles, sizes, exit
 codes, the session file, and the browser processes before and after a sleep.
 

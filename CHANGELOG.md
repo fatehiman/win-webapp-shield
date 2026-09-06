@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.1.0 - 2026-09-06
+
+### Added
+
+- `loading-indicator`: a spinner that runs after the window title while a page is
+  loading, so a wrapped app no longer looks frozen on a slow page. Styles: `spinner`
+  (the classic `| / - \`), `bar` (`[=   ]` bouncing, DOS file manager style), `dots`,
+  `braille`, and `off`. One frame every 120 ms.
+- The same animation now shows in the middle of the window as `Loading  /` until the
+  first page has something to draw. A freshly created WebView2 paints plain white,
+  which reads as a broken app rather than a busy one.
+- The tray tooltip says `<title> - loading...` while busy.
+
+### Notes
+
+- The spinner covers browser start-up and the first page load with no gap between
+  them, and stops after 60 seconds so a single page app that never reports
+  "navigation completed" cannot leave the title spinning for ever.
+- The page is revealed on `DOMContentLoaded`, on `NavigationCompleted`, or after a
+  15 second fallback, whichever happens first, so the placeholder can never get stuck
+  in front of a working page.
+- Anything that reads the window title must allow for the spinner suffix; the title is
+  `"<title>"` when idle and `"<title>  <frame>"` while loading.
+
 ## 1.0.0 - 2026-09-06
 
 First release.

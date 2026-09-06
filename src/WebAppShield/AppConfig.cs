@@ -64,6 +64,10 @@ public sealed class AppConfig
     public string SleepAfter { get; set; } = "auto";
 
     // ---- extras ----------------------------------------------------------
+    /// <summary>Spinner shown after the title while a page loads: spinner, bar, dots, braille, off.</summary>
+    [JsonPropertyName("loading-indicator")]
+    public string LoadingIndicator { get; set; } = "spinner";
+
     /// <summary>What the X button does: "auto" (tray if the tray is on), "tray" or "exit".</summary>
     [JsonPropertyName("close-action")]
     public string CloseAction { get; set; } = "auto";
@@ -168,6 +172,14 @@ public sealed class AppConfig
 
         if (!IsOneOf(SleepAfter, "auto", "off", "never") && ParseMinutes(SleepAfter) is null)
             problems.Add($"\"sleep-after\" must be auto, off, or a number of minutes (got \"{SleepAfter}\").");
+
+        if (!IsOneOf(LoadingIndicator, "off", "none")
+            && !WebAppShield.LoadingIndicator.Styles.ContainsKey(LoadingIndicator?.Trim() ?? ""))
+        {
+            problems.Add($"\"loading-indicator\" must be one of " +
+                         string.Join(", ", WebAppShield.LoadingIndicator.Styles.Keys) +
+                         $", or off (got \"{LoadingIndicator}\").");
+        }
 
         if (!IsOneOf(CloseAction, "auto", "tray", "exit"))
             problems.Add($"\"close-action\" must be auto, tray or exit (got \"{CloseAction}\").");

@@ -26,6 +26,23 @@ public sealed class MainForm : Form
     private Label? _status;
     private NotifyIcon? _tray;
     private SleepManager _sleep = null!;
+    private LoadingIndicator _loading = null!;
+
+    /// <summary>Title without the spinner. The spinner is appended to this.</summary>
+    private string _baseTitle = "";
+
+    // Two separate reasons to show the spinner: starting the browser up, and the
+    // page itself navigating. The spinner runs while either is true.
+    private bool _startingBrowser;
+    private bool _navigating;
+
+    /// <summary>
+    /// False until the first page of this browser session has something to show. Until
+    /// then the animated placeholder stays in front, because a freshly created WebView2
+    /// paints plain white and that looks like a broken app rather than a busy one.
+    /// </summary>
+    private bool _pageRevealed;
+    private System.Windows.Forms.Timer? _revealFallback;
 
     private string _currentUrl;
     private string? _startHost;
@@ -51,6 +68,9 @@ public sealed class MainForm : Form
         // finished starting, and the session file should still know where we were.
         RememberUrl(_currentUrl);
         _startHidden = cfg.WindowState.Trim().Equals("tray", StringComparison.OrdinalIgnoreCase);
+
+        _baseTitle = cfg.EffectiveTitle;
+        _loading = new LoadingIndicator(cfg.LoadingIndicator, RenderLoadingFrame);
 
         BuildWindow();
         BuildTray();
@@ -99,7 +119,7 @@ public sealed class MainForm : Form
     private void BuildWindow()
     {
         AutoScaleMode = AutoScaleMode.None;   // width/height in the conf file are real pixels
-        Text = _cfg.EffectiveTitle;
+        Text = _baseTitle;
         BackColor = Color.White;
         KeyPreview = false;
         DoubleBuffered = true;
@@ -245,12 +265,38 @@ public sealed class MainForm : Form
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max];
 
+    /// <summary>
+    /// Called by the indicator for every frame. A null frame means "back to idle".
+    /// </summary>
+    private void RenderLoadingFrame(string? frame)
+    {
+        Text = frame is null ? _baseTitle : _baseTitle + "  " + frame;
+
+        // The placeholder shown before the browser control exists gets one too.
+        if (_status is { Visible: true })
+            _status.Text = frame is null ? "Loading..." : "Loading  " + frame;
+
+        // The tray tooltip only says whether it is busy: rewriting it 8 times a
+        // second would make Windows rebuild the tooltip for nothing.
+        if (_tray is not null)
+        {
+            string tip = frame is null ? _baseTitle : _baseTitle + " - loading...";
+            tip = Truncate(tip, 63);
+            if (_tray.Text != tip) _tray.Text = tip;
+        }
+    }
+
+    private void UpdateLoadingState() => _loading.SetBusy(_startingBrowser || _navigating);
+
     // ------------------------------------------------------- browser lifetime
 
     private async void EnsureWebView()
     {
         if (_web is not null || _webBusy) return;
         _webBusy = true;
+        _startingBrowser = true;
+        UpdateLoadingState();
+
         WebView2? view = null;
         try
         {
@@ -268,7 +314,10 @@ public sealed class MainForm : Form
                 }
             };
             Controls.Add(view);
-            view.BringToFront();
+            // Deliberately NOT brought to front yet: the placeholder stays visible
+            // until the page has content. RevealPage() puts the browser on top.
+            _pageRevealed = false;
+            _status?.BringToFront();
 
             await view.EnsureCoreWebView2Async();
 
@@ -282,6 +331,8 @@ public sealed class MainForm : Form
 
             core.NewWindowRequested += OnNewWindowRequested;
             core.NavigationStarting += OnNavigationStarting;
+            core.NavigationCompleted += OnNavigationCompleted;
+            core.DOMContentLoaded += (_, _) => RevealPage();
             core.SourceChanged += (_, _) => RememberUrl(core.Source);
             core.DocumentTitleChanged += (_, _) => { /* the conf title wins, nothing to do */ };
             core.ProcessFailed += OnProcessFailed;
@@ -289,13 +340,26 @@ public sealed class MainForm : Form
             view.ZoomFactor = _cfg.Zoom;
 
             _web = view;
-            if (_status is not null) _status.Visible = false;
+
+            // Safety net: if a page never reports that it loaded, show it anyway
+            // rather than leaving the placeholder on top for ever.
+            _revealFallback?.Dispose();
+            _revealFallback = new System.Windows.Forms.Timer { Interval = 15_000 };
+            _revealFallback.Tick += (_, _) => RevealPage();
+            _revealFallback.Start();
 
             _startHost = TryHost(_cfg.Url);
 
             // Record it before navigating. SourceChanged only fires once the browser
             // actually moves, and the user may close the window before that.
             RememberUrl(_currentUrl);
+
+            // Hand the spinner over from "starting up" to "loading the page", with no
+            // gap in between, so the title never flickers back to idle.
+            _navigating = true;
+            _startingBrowser = false;
+            UpdateLoadingState();
+
             core.Navigate(_currentUrl);
         }
         catch (WebView2RuntimeNotFoundException)
@@ -311,6 +375,24 @@ public sealed class MainForm : Form
         {
             _webBusy = false;
         }
+    }
+
+    /// <summary>Put the browser in front of the placeholder. Safe to call many times.</summary>
+    private void RevealPage()
+    {
+        if (_pageRevealed) return;
+        _pageRevealed = true;
+
+        _revealFallback?.Stop();
+        _web?.BringToFront();
+        if (_status is not null) _status.Visible = false;
+    }
+
+    private void StopLoadingSpinner()
+    {
+        _startingBrowser = false;
+        _navigating = false;
+        UpdateLoadingState();
     }
 
     /// <summary>Throw away a control that never finished starting up.</summary>
@@ -340,6 +422,7 @@ public sealed class MainForm : Form
         if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited)
         {
             // The browser process died. Rebuild it on the next time the window is shown.
+            StopLoadingSpinner();
             DisposeWebView();
             if (Visible && WindowState != FormWindowState.Minimized) EnsureWebView();
         }
@@ -347,6 +430,9 @@ public sealed class MainForm : Form
 
     private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
     {
+        _navigating = true;
+        UpdateLoadingState();
+
         if (!_cfg.ExternalLinksInBrowser) return;
         if (!e.IsUserInitiated) return;
 
@@ -355,7 +441,16 @@ public sealed class MainForm : Form
         if (string.Equals(host, _startHost, StringComparison.OrdinalIgnoreCase)) return;
 
         e.Cancel = true;
+        _navigating = false;
+        UpdateLoadingState();
         WebView2MissingForm.OpenUrl(e.Uri);
+    }
+
+    private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        _navigating = false;
+        UpdateLoadingState();
+        RevealPage();   // also covers a page that failed to load: show its error page
     }
 
     private void OnNewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
@@ -388,6 +483,8 @@ public sealed class MainForm : Form
         }
         catch { /* nothing useful to do while tearing down */ }
         _web = null;
+        _pageRevealed = false;
+        _revealFallback?.Stop();
     }
 
     /// <summary>Drop the embedded browser and hand the memory back to Windows.</summary>
@@ -396,6 +493,7 @@ public sealed class MainForm : Form
         if (_web is null) { _sleep.MarkAsleep(); return; }
         if (Visible && WindowState != FormWindowState.Minimized) return;   // safety net
 
+        StopLoadingSpinner();
         DisposeWebView();
         _sleep.MarkAsleep();
         SaveSession();
@@ -539,6 +637,8 @@ public sealed class MainForm : Form
     {
         if (_tray is not null) { _tray.Visible = false; _tray.Dispose(); _tray = null; }
         _sleep?.Dispose();
+        _loading?.Dispose();
+        _revealFallback?.Dispose();
         DisposeWebView();
         _uiMarshal.Dispose();
         base.OnFormClosed(e);

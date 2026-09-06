@@ -180,12 +180,31 @@ function Kill-App([System.Diagnostics.Process]$proc) {
 function Wait-Window([System.Diagnostics.Process]$proc, [int]$timeoutSeconds = 25) {
     $deadline = (Get-Date).AddSeconds($timeoutSeconds)
     while ((Get-Date) -lt $deadline) {
-        if ($proc.HasExited) { return @() }
+        if ($proc.HasExited) { return ,@() }
         $windows = @([WwsWin]::TopLevel($proc.Id) | Where-Object { $_.Visible })
-        if ($windows.Count -gt 0) { return $windows }
+        if ($windows.Count -gt 0) { return ,$windows }
         Start-Sleep -Milliseconds 300
     }
-    return @()
+    return ,@()
+}
+
+# The window title carries a loading spinner while a page loads ("Session  /"),
+# so never compare titles with -eq when looking for a window.
+function Find-Window([System.Diagnostics.Process]$proc, [string]$title) {
+    # The leading comma keeps PowerShell from unrolling a one-element array on return.
+    return ,@([WwsWin]::TopLevel($proc.Id) |
+        Where-Object { $_.Visible -and ($_.Title -eq $title -or $_.Title -like "$title  *") })
+}
+
+function Wait-TitledWindow([System.Diagnostics.Process]$proc, [string]$title, [int]$timeoutSeconds = 25) {
+    $deadline = (Get-Date).AddSeconds($timeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if ($proc.HasExited) { return $null }
+        $found = Find-Window $proc $title
+        if ($found.Count -gt 0) { return $found[0] }
+        Start-Sleep -Milliseconds 200
+    }
+    return $null
 }
 
 function Stop-App([System.Diagnostics.Process]$proc, [int]$timeoutSeconds = 10) {
@@ -249,8 +268,7 @@ try {
 "@
     $dir = New-Case 'normal' $conf
     $p = Start-App $dir
-    $windows = Wait-Window $p
-    $w = $windows | Where-Object { $_.Title -eq 'Smoke Test Window' } | Select-Object -First 1
+    $w = Wait-TitledWindow $p 'Smoke Test Window'
     Check 'the window exists with the configured title' ($null -ne $w)
     if ($w) {
         Check 'it has a native title bar' $w.HasCaption
@@ -269,7 +287,7 @@ try {
     $conf = "{ `"url`": `"$Fast`", `"window-type`": `"min`", `"title`": `"OnlyMin`", `"sleep-after`": `"off`" }"
     $dir = New-Case 'only-min' $conf
     $p = Start-App $dir
-    $w = (Wait-Window $p) | Where-Object { $_.Title -eq 'OnlyMin' } | Select-Object -First 1
+    $w = Wait-TitledWindow $p 'OnlyMin'
     Check 'the window exists' ($null -ne $w)
     if ($w) {
         Check 'it still has a title bar' $w.HasCaption
@@ -354,7 +372,7 @@ try {
         # start again: the window must come back where it was
         $before = $session.window
         $p2 = Start-App $dir
-        $w2 = (Wait-Window $p2) | Where-Object { $_.Title -eq 'Session' } | Select-Object -First 1
+        $w2 = Wait-TitledWindow $p2 'Session'
         Check 'the second start restored the saved position' ($null -ne $w2 -and $w2.X -eq $before.x -and $w2.Y -eq $before.y) "got $($w2.X),$($w2.Y) want $($before.x),$($before.y)"
         $null = Stop-App $p2
     }
@@ -364,7 +382,7 @@ try {
     $conf = "{ `"url`": `"$Fast`", `"monitor`": 9, `"width`": 500, `"height`": 400, `"title`": `"Monitor9`", `"sleep-after`": `"off`" }"
     $dir = New-Case 'monitor-fallback' $conf
     $p = Start-App $dir
-    $w = (Wait-Window $p) | Where-Object { $_.Title -eq 'Monitor9' } | Select-Object -First 1
+    $w = Wait-TitledWindow $p 'Monitor9'
     Check 'the window opened anyway' ($null -ne $w)
     if ($w) {
         Add-Type -AssemblyName System.Windows.Forms
@@ -390,7 +408,7 @@ try {
         Check 'the file now starts with the WASENC1 magic' ([System.Text.Encoding]::ASCII.GetString($bytes, 0, 7) -eq 'WASENC1')
 
         $p = Start-App $dir
-        $w = (Wait-Window $p) | Where-Object { $_.Title -eq 'Encrypted' } | Select-Object -First 1
+        $w = Wait-TitledWindow $p 'Encrypted'
         Check 'the app decrypted it and opened the window' ($null -ne $w)
         if ($w) { Check "width came from the encrypted file (got $($w.Width))" ($w.Width -eq 660) }
         $null = Stop-App $p
@@ -418,22 +436,76 @@ try {
         Start-Sleep -Milliseconds 250
     }
     Check 'a warning box was shown' $sawWarning
-    $w = (Wait-Window $p) | Where-Object { $_.Title -eq 'Warned' } | Select-Object -First 1
+    $w = Wait-TitledWindow $p 'Warned'
     Check 'the app carried on and opened the window' ($null -ne $w)
     $null = Stop-App $p
 
+
     # ---------------------------------------------------------------- 12
-    Scenario '12. With the tray on, Close hides instead of quitting'
+    Scenario '12. The title bar spins while the page is loading'
+    $conf = "{ `"url`": `"$Fast`", `"title`": `"Spinner`", `"loading-indicator`": `"spinner`", `"sleep-after`": `"off`" }"
+    $dir = New-Case 'spinner' $conf
+    $p = Start-App $dir
+
+    # Sample the real window title as fast as we can and collect what we saw.
+    $seen = New-Object System.Collections.Generic.HashSet[string]
+    $deadline = (Get-Date).AddSeconds(30)
+    $settled = $false
+    while ((Get-Date) -lt $deadline) {
+        if ($p.HasExited) { break }
+        foreach ($win in [WwsWin]::TopLevel($p.Id)) {
+            if ($win.Visible -and $win.Title -like 'Spinner*') { $null = $seen.Add($win.Title) }
+        }
+        # once a frame has been seen, wait for the title to settle back
+        if ($seen.Count -gt 1 -and @([WwsWin]::TopLevel($p.Id) | Where-Object { $_.Title -eq 'Spinner' }).Count -gt 0) {
+            $settled = $true
+            break
+        }
+        Start-Sleep -Milliseconds 40
+    }
+
+    # A frame looks like 'Spinner' + two spaces + one of | / - \
+    $frameChars = @('|', '/', '-', '\')
+    $isFrame = { param($t) $t.Length -eq 10 -and $t.StartsWith('Spinner  ') -and $frameChars -contains $t.Substring(9) }
+    $frames = @($seen | Where-Object { & $isFrame $_ })
+    Check "an ASCII spinner frame appeared after the title (saw $($frames.Count) of 4)" ($frames.Count -gt 0) "titles seen: $($seen -join ' | ')"
+    Check 'the title went back to plain once the page had loaded' $settled
+
+    # nothing but the plain title and the four frames may ever be shown
+    $unexpected = @($seen | Where-Object { $_ -ne 'Spinner' -and -not (& $isFrame $_) })
+    Check 'no other title text was used' ($unexpected.Count -eq 0) "unexpected: $($unexpected -join ' | ')"
+    $null = Stop-App $p
+
+    # ---------------------------------------------------------------- 13
+    Scenario '13. loading-indicator "off" leaves the title alone'
+    $conf = "{ `"url`": `"$Fast`", `"title`": `"NoSpin`", `"loading-indicator`": `"off`", `"sleep-after`": `"off`" }"
+    $dir = New-Case 'no-spinner' $conf
+    $p = Start-App $dir
+    $seen = New-Object System.Collections.Generic.HashSet[string]
+    $deadline = (Get-Date).AddSeconds(12)
+    while ((Get-Date) -lt $deadline) {
+        if ($p.HasExited) { break }
+        foreach ($win in [WwsWin]::TopLevel($p.Id)) {
+            if ($win.Visible -and $win.Title -like 'NoSpin*') { $null = $seen.Add($win.Title) }
+        }
+        Start-Sleep -Milliseconds 40
+    }
+    Check 'the title was shown' ($seen.Count -gt 0)
+    Check 'the title never changed' ($seen.Count -eq 1) "saw: $($seen -join ' | ')"
+    $null = Stop-App $p
+
+    # ---------------------------------------------------------------- 14
+    Scenario '14. With the tray on, Close hides instead of quitting'
     $conf = "{ `"url`": `"$Fast`", `"window-type`": `"min+max+close+tray`", `"systray`": true, `"title`": `"TrayClose`", `"single-instance-action`": `"focus`", `"sleep-after`": `"off`" }"
     $dir = New-Case 'tray-close' $conf
     $p = Start-App $dir
-    $w = (Wait-Window $p) | Where-Object { $_.Title -eq 'TrayClose' } | Select-Object -First 1
+    $w = Wait-TitledWindow $p 'TrayClose'
     Check 'the window opened' ($null -ne $w)
     if ($w) {
         [WwsWin]::SysCommand($w.Handle, 0xF060)   # SC_CLOSE, exactly what clicking the X sends
         Start-Sleep -Seconds 3
         Check 'the process is still running after Close' (-not $p.HasExited)
-        $stillVisible = @([WwsWin]::TopLevel($p.Id) | Where-Object { $_.Visible -and $_.Title -eq 'TrayClose' })
+        $stillVisible = Find-Window $p 'TrayClose'
         Check 'the window is hidden, not shown' ($stillVisible.Count -eq 0) "found $($stillVisible.Count)"
         if ($stillVisible.Count -ne 0) { Show-Windows $p }
 
@@ -444,7 +516,7 @@ try {
         $back = $null
         $deadline = (Get-Date).AddSeconds(10)
         while ((Get-Date) -lt $deadline) {
-            $back = @([WwsWin]::TopLevel($p.Id) | Where-Object { $_.Visible -and $_.Title -eq 'TrayClose' })
+            $back = Find-Window $p 'TrayClose'
             if ($back.Count -gt 0) { break }
             Start-Sleep -Milliseconds 300
         }
@@ -452,35 +524,35 @@ try {
     }
     Kill-App $p
 
-    # ---------------------------------------------------------------- 13
-    Scenario '13. Minimize goes to the tray when minimize-to-tray is on'
+    # ---------------------------------------------------------------- 15
+    Scenario '15. Minimize goes to the tray when minimize-to-tray is on'
     $conf = "{ `"url`": `"$Fast`", `"window-type`": `"min+max+close+tray`", `"systray`": true, `"minimize-to-tray`": true, `"title`": `"TrayMin`", `"sleep-after`": `"off`" }"
     $dir = New-Case 'tray-min' $conf
     $p = Start-App $dir
-    $w = (Wait-Window $p) | Where-Object { $_.Title -eq 'TrayMin' } | Select-Object -First 1
+    $w = Wait-TitledWindow $p 'TrayMin'
     Check 'the window opened' ($null -ne $w)
     if ($w) {
         [WwsWin]::SysCommand($w.Handle, 0xF020)   # SC_MINIMIZE
         Start-Sleep -Seconds 3
-        $stillVisible = @([WwsWin]::TopLevel($p.Id) | Where-Object { $_.Visible -and $_.Title -eq 'TrayMin' })
+        $stillVisible = Find-Window $p 'TrayMin'
         Check 'the window left the taskbar and the screen' ($stillVisible.Count -eq 0) "found $($stillVisible.Count)"
         if ($stillVisible.Count -ne 0) { Show-Windows $p }
         Check 'the process is still running' (-not $p.HasExited)
     }
     Kill-App $p
 
-    # ---------------------------------------------------------------- 14
+    # ---------------------------------------------------------------- 16
     if (-not $IncludeSlow) {
-        Scenario '14. sleep-after frees the browser  (skipped, pass -IncludeSlow)'
+        Scenario '16. sleep-after frees the browser  (skipped, pass -IncludeSlow)'
     }
     else {
-        Scenario '14. sleep-after frees the browser while the window is hidden'
+        Scenario '16. sleep-after frees the browser while the window is hidden'
         # "focus" so that starting a second copy wakes the sleeping one instead of
         # showing the "already running" error box.
         $conf = "{ `"url`": `"$Fast`", `"window-type`": `"min+max+close+tray`", `"systray`": true, `"title`": `"Sleeper`", `"single-instance-action`": `"focus`", `"sleep-after`": 1 }"
         $dir = New-Case 'sleep' $conf
         $p = Start-App $dir
-        $w = (Wait-Window $p) | Where-Object { $_.Title -eq 'Sleeper' } | Select-Object -First 1
+        $w = Wait-TitledWindow $p 'Sleeper'
         Check 'the window opened' ($null -ne $w)
         Start-Sleep -Seconds 6
 

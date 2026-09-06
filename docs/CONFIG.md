@@ -245,6 +245,38 @@ what the machine is doing.
 
 Every one of these has a working default. You can delete them all.
 
+### `loading-indicator`
+
+`"spinner"` (default), `"bar"`, `"dots"`, `"braille"`, or `"off"`.
+
+While a page is loading, a small animation runs after the window title, the way DOS
+and Linux tools have always shown "still working":
+
+```
+Microsoft To Do  |
+Microsoft To Do  /
+Microsoft To Do  -
+Microsoft To Do  ```
+
+| value | frames |
+|---|---|
+| `"spinner"` | `|` `/` `-` `\` — plain ASCII, works in every font |
+| `"bar"` | `[=   ]` `[ =  ]` `[  = ]` `[   =]` — a block bouncing in brackets |
+| `"dots"` | `.` `..` `...` |
+| `"braille"` | `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` — smooth, needs a font with Braille characters |
+| `"off"` | the title never changes |
+
+It runs in three places at once:
+
+- after the window title, one frame every 120 ms
+- in the middle of the window, as `Loading  /`, until the first page has something to
+  draw — a fresh WebView2 paints plain white, which looks broken rather than busy
+- in the tray tooltip, which just says `<title> - loading...` while busy
+
+The animation starts while the browser is starting up and keeps running through the
+first page load, with no gap in between. It stops on its own after 60 seconds, so a
+single page app that never reports "finished" cannot leave the title spinning for ever.
+
 ### `close-action`
 
 `"auto"` (default), `"tray"`, `"exit"`.
