@@ -28,8 +28,20 @@ public sealed class MainForm : Form
     private SleepManager _sleep = null!;
     private LoadingIndicator _loading = null!;
 
-    /// <summary>Title without the spinner. The spinner is appended to this.</summary>
+    /// <summary>Title on its own. Everything else is appended to this.</summary>
     private string _baseTitle = "";
+
+    /// <summary>Current spinner frame, or null when nothing is loading.</summary>
+    private string? _loadingFrame;
+
+    /// <summary>"1100x820" while the window is being resized, otherwise null.</summary>
+    private string? _resizeSize;
+
+    /// <summary>Clears the size from the title once the resizing stops.</summary>
+    private System.Windows.Forms.Timer? _resizeHideTimer;
+
+    /// <summary>Last size reported in the title, so a restore does not re-announce it.</summary>
+    private Size? _lastReportedSize;
 
     // Two separate reasons to show the spinner: starting the browser up, and the
     // page itself navigating. The spinner runs while either is true.
@@ -157,7 +169,13 @@ public sealed class MainForm : Form
         };
         Controls.Add(_status);
 
-        Shown += (_, _) => EnsureWebView();
+        Shown += (_, _) =>
+        {
+            // Take the startup size as already known, so opening the window does not
+            // announce a size the user never asked about.
+            _lastReportedSize = Bounds.Size;
+            EnsureWebView();
+        };
         ResizeEnd += (_, _) => { RememberBounds(); SaveSession(); };
     }
 
@@ -266,11 +284,24 @@ public sealed class MainForm : Form
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max];
 
     /// <summary>
+    /// The only place the window title is built, so the spinner and the resize size
+    /// cannot overwrite each other. The size wins while it is showing: it is the
+    /// shorter lived of the two and it is what the user is looking at.
+    /// </summary>
+    private void UpdateTitle()
+    {
+        if (_resizeSize is not null) Text = _baseTitle + " - " + _resizeSize;
+        else if (_loadingFrame is not null) Text = _baseTitle + "  " + _loadingFrame;
+        else Text = _baseTitle;
+    }
+
+    /// <summary>
     /// Called by the indicator for every frame. A null frame means "back to idle".
     /// </summary>
     private void RenderLoadingFrame(string? frame)
     {
-        Text = frame is null ? _baseTitle : _baseTitle + "  " + frame;
+        _loadingFrame = frame;
+        UpdateTitle();
 
         // The placeholder shown before the browser control exists gets one too.
         if (_status is { Visible: true })
@@ -522,6 +553,7 @@ public sealed class MainForm : Form
     {
         RememberBounds();
         _hiddenInTray = true;
+        ClearReportedSize();
         // Hide() alone is enough: a hidden form has no taskbar button either way.
         // Touching ShowInTaskbar would be worse than useless here - WinForms answers
         // it by destroying and recreating the window handle, and the WebView2 child
@@ -609,8 +641,58 @@ public sealed class MainForm : Form
         {
             _restoreState = WindowState;
             _sleep?.MarkActive();
+            ReportSize();
             if (Visible) EnsureWebView();
         }
+    }
+
+    /// <summary>
+    /// Puts "1100x820" after the title while the window is being resized, and takes it
+    /// away again a second after the last change.
+    ///
+    /// The numbers are the whole window, borders included, which is exactly what the
+    /// "width" and "height" settings mean, so what you read here can be pasted
+    /// straight into the .conf file.
+    /// </summary>
+    private void ReportSize()
+    {
+        if (!_cfg.ShowSizeOnResize) return;
+        if (!Visible || _lastReportedSize is null) return;
+
+        var size = Bounds.Size;
+        if (size.Width <= 0 || size.Height <= 0) return;
+
+        // Only a genuine size change is worth announcing. Coming back from the tray or
+        // from minimized restores the old size, and that is not news.
+        if (size == _lastReportedSize.Value) return;
+        _lastReportedSize = size;
+
+        _resizeSize = $"{size.Width}x{size.Height}";
+        UpdateTitle();
+
+        _resizeHideTimer ??= CreateResizeHideTimer();
+        _resizeHideTimer.Stop();
+        _resizeHideTimer.Start();
+    }
+
+    private System.Windows.Forms.Timer CreateResizeHideTimer()
+    {
+        var timer = new System.Windows.Forms.Timer { Interval = 1000 };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            _resizeSize = null;
+            UpdateTitle();
+        };
+        return timer;
+    }
+
+    private void ClearReportedSize()
+    {
+        _resizeHideTimer?.Stop();
+        if (_resizeSize is null) return;
+        _resizeSize = null;
+        UpdateTitle();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -639,6 +721,7 @@ public sealed class MainForm : Form
         _sleep?.Dispose();
         _loading?.Dispose();
         _revealFallback?.Dispose();
+        _resizeHideTimer?.Dispose();
         DisposeWebView();
         _uiMarshal.Dispose();
         base.OnFormClosed(e);

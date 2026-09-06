@@ -250,6 +250,31 @@ what the machine is doing.
 
 Every one of these has a working default. You can delete them all.
 
+### `show-size-on-resize`
+
+`true` (default) / `false`.
+
+While the window is being resized, its size is shown after the title:
+
+```
+MS To Do - 450x320
+```
+
+It clears itself one second after the last change, so the title is only busy while the
+user is actually dragging.
+
+The numbers are the **whole window**, borders included, which is exactly what `width`
+and `height` mean in this file. So the way to find a size you like is: drag the window
+until it looks right, read the numbers off the title bar, and paste them in.
+
+Maximizing or snapping the window shows the size too, since that also changes it.
+Restoring the window from the tray or from minimized does not, because the size did not
+actually change.
+
+If anything you write reads this window's title, remember it is not always just the
+title: it is `"<title>"` when idle, `"<title>  <spinner frame>"` while loading, and
+`"<title> - <width>x<height>"` while resizing.
+
 ### `loading-indicator`
 
 `"spinner"` (default), `"bar"`, `"dots"`, `"braille"`, or `"off"`.

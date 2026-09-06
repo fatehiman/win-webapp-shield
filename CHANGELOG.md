@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.3.0 - 2026-09-06
+
+### Added
+
+- While the window is being resized, its size is shown after the title
+  (`MS To Do - 450x320`) and clears itself one second after the last change. The
+  numbers are the whole window, the same thing `width` and `height` mean in the
+  config, so a size you like can be read off the title bar and pasted straight in.
+- `show-size-on-resize` turns it off.
+
+### Notes
+
+- Maximizing or snapping shows the size too, since that also changes it. Restoring
+  from the tray or from minimized does not, because the size did not actually change,
+  and re-announcing an unchanged size would just be noise.
+- The window title now has three shapes: `"<title>"` when idle,
+  `"<title>  <frame>"` while loading, and `"<title> - <w>x<h>"` while resizing. It is
+  built in one place so the spinner and the size cannot overwrite each other; the size
+  wins while it is showing, being the shorter lived of the two.
+
 ## 1.2.0 - 2026-09-06
 
 ### Added

@@ -111,6 +111,19 @@ public class WwsWin
 
     public static void Close(IntPtr hwnd) { PostMessage(hwnd, 0x0010, IntPtr.Zero, IntPtr.Zero); }
 
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
+    /// <summary>Resize a window without moving it or changing its z-order.</summary>
+    public static void Resize(IntPtr hwnd, int width, int height)
+    {
+        const uint SWP_NOMOVE = 0x0002, SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
+        SetWindowPos(hwnd, IntPtr.Zero, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
+    /// <summary>WM_ENTERSIZEMOVE / WM_EXITSIZEMOVE, what a real border drag sends.</summary>
+    public static void EnterSizeMove(IntPtr hwnd) { PostMessage(hwnd, 0x0231, IntPtr.Zero, IntPtr.Zero); }
+    public static void ExitSizeMove(IntPtr hwnd) { PostMessage(hwnd, 0x0232, IntPtr.Zero, IntPtr.Zero); }
+
     /// <summary>WM_SYSCOMMAND, e.g. 0xF020 = minimize.</summary>
     public static void SysCommand(IntPtr hwnd, int command)
     {
@@ -188,12 +201,16 @@ function Wait-Window([System.Diagnostics.Process]$proc, [int]$timeoutSeconds = 2
     return ,@()
 }
 
-# The window title carries a loading spinner while a page loads ("Session  /"),
+# The window title is not just the title. It carries a loading spinner while a page
+# loads ("Session  /") and the window size while the user resizes ("Session - 700x500"),
 # so never compare titles with -eq when looking for a window.
 function Find-Window([System.Diagnostics.Process]$proc, [string]$title) {
     # The leading comma keeps PowerShell from unrolling a one-element array on return.
-    return ,@([WwsWin]::TopLevel($proc.Id) |
-        Where-Object { $_.Visible -and ($_.Title -eq $title -or $_.Title -like "$title  *") })
+    return ,@([WwsWin]::TopLevel($proc.Id) | Where-Object {
+        $_.Visible -and ($_.Title -eq $title -or        # idle
+            $_.Title -like "$title  *" -or              # loading spinner
+            $_.Title -like "$title - *")                # size while resizing
+    })
 }
 
 function Wait-TitledWindow([System.Diagnostics.Process]$proc, [string]$title, [int]$timeoutSeconds = 25) {
@@ -495,7 +512,81 @@ try {
     $null = Stop-App $p
 
     # ---------------------------------------------------------------- 14
-    Scenario '14. With the tray on, Close hides instead of quitting'
+    Scenario '14. Resizing shows the size in the title, then hides it'
+    $conf = "{ `"url`": `"$Fast`", `"width`": 700, `"height`": 500, `"title`": `"Sizer`", `"loading-indicator`": `"off`", `"sleep-after`": `"off`" }"
+    $dir = New-Case 'resize' $conf
+    $p = Start-App $dir
+    $w = Wait-TitledWindow $p 'Sizer'
+    Check 'the window opened' ($null -ne $w)
+    if ($w) {
+        Start-Sleep -Seconds 3          # let the first page settle
+        Check 'the title starts out plain' ((Find-Window $p 'Sizer')[0].Title -eq 'Sizer')
+
+        # Drag the border, the way a person would: enter a sizing session, change the
+        # size a few times, leave the session.
+        [WwsWin]::EnterSizeMove($w.Handle)
+        $seen = New-Object System.Collections.Generic.HashSet[string]
+        foreach ($size in @(@(640, 460), @(600, 430), @(560, 400))) {
+            [WwsWin]::Resize($w.Handle, $size[0], $size[1])
+            for ($i = 0; $i -lt 6; $i++) {
+                $now = Find-Window $p 'Sizer'
+                if ($now.Count -gt 0) { $null = $seen.Add($now[0].Title) }
+                Start-Sleep -Milliseconds 40
+            }
+        }
+        [WwsWin]::ExitSizeMove($w.Handle)
+
+        $sizeTitles = @($seen | Where-Object { $_ -match '^Sizer - \d+x\d+$' })
+        Check "the size appeared in the title (saw $($sizeTitles.Count))" ($sizeTitles.Count -gt 0) "titles seen: $($seen -join ' | ')"
+        Check 'the last size shown is the size asked for' ($seen -contains 'Sizer - 560x400') "titles seen: $($seen -join ' | ')"
+
+        # the numbers must be the whole window, so they can go straight into a .conf
+        $found = Find-Window $p 'Sizer'
+        Check 'the window is still there' ($found.Count -gt 0)
+        if ($found.Count -gt 0) {
+            $final = $found[0]
+            Check "the numbers match the real window ($($final.Width)x$($final.Height))" ($seen -contains "Sizer - $($final.Width)x$($final.Height)")
+        }
+
+        # and it must clear itself about a second after the last change
+        Start-Sleep -Milliseconds 400
+        $now = Find-Window $p 'Sizer'
+        $stillThere = if ($now.Count -gt 0) { $now[0].Title } else { '(window gone)' }
+        Check 'it is still shown 0.4s after the last change' ($stillThere -like 'Sizer - *') "title was '$stillThere'"
+
+        Start-Sleep -Milliseconds 1200
+        $now = Find-Window $p 'Sizer'
+        $cleared = if ($now.Count -gt 0) { $now[0].Title } else { '(window gone)' }
+        Check 'it is gone about a second later' ($cleared -eq 'Sizer') "title was '$cleared'"
+    }
+    $null = Stop-App $p
+
+    # ---------------------------------------------------------------- 15
+    Scenario '15. show-size-on-resize false leaves the title alone'
+    $conf = "{ `"url`": `"$Fast`", `"width`": 700, `"height`": 500, `"title`": `"NoSize`", `"show-size-on-resize`": false, `"loading-indicator`": `"off`", `"sleep-after`": `"off`" }"
+    $dir = New-Case 'no-resize-size' $conf
+    $p = Start-App $dir
+    $w = Wait-TitledWindow $p 'NoSize'
+    Check 'the window opened' ($null -ne $w)
+    if ($w) {
+        Start-Sleep -Seconds 3
+        $seen = New-Object System.Collections.Generic.HashSet[string]
+        [WwsWin]::EnterSizeMove($w.Handle)
+        foreach ($size in @(@(640, 460), @(600, 430))) {
+            [WwsWin]::Resize($w.Handle, $size[0], $size[1])
+            for ($i = 0; $i -lt 8; $i++) {
+                $now = Find-Window $p 'NoSize'
+                if ($now.Count -gt 0) { $null = $seen.Add($now[0].Title) }
+                Start-Sleep -Milliseconds 40
+            }
+        }
+        [WwsWin]::ExitSizeMove($w.Handle)
+        Check 'the title never changed' ($seen.Count -eq 1 -and $seen -contains 'NoSize') "saw: $($seen -join ' | ')"
+    }
+    $null = Stop-App $p
+
+    # ---------------------------------------------------------------- 16
+    Scenario '16. With the tray on, Close hides instead of quitting'
     $conf = "{ `"url`": `"$Fast`", `"window-type`": `"min+max+close+tray`", `"systray`": true, `"title`": `"TrayClose`", `"single-instance-action`": `"focus`", `"sleep-after`": `"off`" }"
     $dir = New-Case 'tray-close' $conf
     $p = Start-App $dir
@@ -524,8 +615,8 @@ try {
     }
     Kill-App $p
 
-    # ---------------------------------------------------------------- 15
-    Scenario '15. Minimize goes to the tray when minimize-to-tray is on'
+    # ---------------------------------------------------------------- 17
+    Scenario '17. Minimize goes to the tray when minimize-to-tray is on'
     $conf = "{ `"url`": `"$Fast`", `"window-type`": `"min+max+close+tray`", `"systray`": true, `"minimize-to-tray`": true, `"title`": `"TrayMin`", `"sleep-after`": `"off`" }"
     $dir = New-Case 'tray-min' $conf
     $p = Start-App $dir
@@ -541,12 +632,12 @@ try {
     }
     Kill-App $p
 
-    # ---------------------------------------------------------------- 16
+    # ---------------------------------------------------------------- 18
     if (-not $IncludeSlow) {
-        Scenario '16. sleep-after frees the browser  (skipped, pass -IncludeSlow)'
+        Scenario '18. sleep-after frees the browser  (skipped, pass -IncludeSlow)'
     }
     else {
-        Scenario '16. sleep-after frees the browser while the window is hidden'
+        Scenario '18. sleep-after frees the browser while the window is hidden'
         # "focus" so that starting a second copy wakes the sleeping one instead of
         # showing the "already running" error box.
         $conf = "{ `"url`": `"$Fast`", `"window-type`": `"min+max+close+tray`", `"systray`": true, `"title`": `"Sleeper`", `"single-instance-action`": `"focus`", `"sleep-after`": 1 }"

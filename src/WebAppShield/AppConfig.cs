@@ -64,6 +64,10 @@ public sealed class AppConfig
     public string SleepAfter { get; set; } = "auto";
 
     // ---- extras ----------------------------------------------------------
+    /// <summary>Show "1100x820" after the title while the window is being resized.</summary>
+    [JsonPropertyName("show-size-on-resize")]
+    public bool ShowSizeOnResize { get; set; } = true;
+
     /// <summary>Spinner shown after the title while a page loads: spinner, bar, dots, braille, off.</summary>
     [JsonPropertyName("loading-indicator")]
     public string LoadingIndicator { get; set; } = "spinner";

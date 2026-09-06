@@ -118,11 +118,12 @@ can never disagree about the file format.
 .\tools\smoke-test.ps1 -IncludeSlow # about 4 minutes, adds the sleep/wake test
 ```
 
-The script starts the real exe with 16 different `.conf` files and checks what Windows
+The script starts the real exe with 18 different `.conf` files and checks what Windows
 actually created: window styles read back with `GetWindowLong`, whether the close
 button carries `CS_NOCLOSE`, window size and position in pixels, process exit codes,
 the `.session` file contents, the `WASENC1` header, every frame of the loading
-spinner, and the browser child processes before and after a sleep. Nothing is mocked.
+spinner, the size shown while resizing, and the browser child processes before and
+after a sleep. Nothing is mocked.
 
 ```
 == 14. sleep-after frees the browser while the window is hidden
@@ -131,7 +132,7 @@ spinner, and the browser child processes before and after a sleep. Nothing is mo
   [pass] memory dropped (56.9 MB -> 10.5 MB)
   [pass] opening it again restarted the browser (found 1)
 
-passed: 62   failed: 0
+passed: 65   failed: 0
 ```
 
 Add `-KeepFiles` to keep the temporary folders (with any `app.error.log`) for a look.
@@ -142,7 +143,7 @@ Add `-KeepFiles` to keep the temporary folders (with any `app.error.log`) for a 
 `windows-latest` for every push, and uploads `dist` as a build artifact. Pushing a tag
 like `v1.0.0` also creates a GitHub release with a zip attached.
 
-The encryption round trip, the `setup.exe` check and the 55 fast smoke-test checks are
+The encryption round trip, the `setup.exe` check and the 65 fast smoke-test checks are
 all hard gates there — the hosted Windows runner does give a real desktop session, so
 the window checks work. The sleep/wake test (`-IncludeSlow`) needs minutes of real
 waiting, so run that one locally before cutting a release.

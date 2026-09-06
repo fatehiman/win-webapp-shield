@@ -30,6 +30,7 @@ mstodo.session    <- written by the app: last window position (optional)
 | **Frees memory** | Drops the whole browser after the window has been out of sight for a while. |
 | **Real app icon** | Build the wrapped app's own logo into the exe, the window and the tray. |
 | **Loading spinner** | `| / - \` after the title while a page loads, DOS style. |
+| **Size while resizing** | `MS To Do - 450x320` in the title, so you can read off a size. |
 
 ---
 
@@ -156,6 +157,19 @@ Styles: `spinner` (the ASCII default), `bar` (`[=   ]` bouncing, DOS file manage
 style), `dots`, `braille`, or `off`. It gives up after 60 seconds so a single page app
 that never says "finished" cannot leave the title spinning for ever.
 
+### Finding a size you like
+
+Drag the window edges and the title shows what you are doing:
+
+```
+MS To Do - 450x320
+```
+
+One second after you stop, it goes back to plain. The numbers are the whole window,
+which is exactly what `width` and `height` mean in the config, so you can read a size
+off the title bar and paste it straight in. Turn it off with
+`"show-size-on-resize": false`.
+
 ---
 
 ## Encrypting the config
@@ -240,7 +254,7 @@ cd win-webapp-shield
 Needs the .NET SDK 8.0 or newer. Everything lands in `.\dist`.
 See [docs/BUILD.md](docs/BUILD.md) for the details.
 
-To check a build, `.\tools\smoke-test.ps1` starts the real exe with 16 different
+To check a build, `.\tools\smoke-test.ps1` starts the real exe with 18 different
 config files and inspects the windows Windows actually created — styles, sizes, exit
 codes, the session file, and the browser processes before and after a sleep.
 
