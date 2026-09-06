@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.4.0 - 2026-09-06
+
+### Added
+
+- `set-icon.exe`. Put an `.ico` next to a built exe of the same name, run it, and the
+  exe carries that icon. No rebuild, no .NET SDK, no source. Run it with no arguments
+  and it takes the first `.ico` in its own folder and the exe with the matching name,
+  so setting up a new wrapped app is: rename the exe, drop the icon in, double click.
+
+### Notes
+
+- The icon is written straight into the exe with the Windows resource API, which
+  rewrites the program and moves the end of the file. A .NET single file exe keeps the
+  whole app appended after that end, addressed by offsets counted from the start of
+  the file, so a plain resource edit leaves it with "Failure processing application
+  bundle". `set-icon` therefore takes the appended block off first, lets Windows write
+  the icon, puts the block back, and moves every offset inside it by the same amount.
+- It refuses to touch an exe whose appended data it cannot recognise, for example a
+  code signed one, and it keeps a copy next to the exe until the whole job is through.
+- Every icon already in the exe is removed, so the new one cannot be shadowed by an
+  old one with a lower resource id.
+
 ## 1.3.0 - 2026-09-06
 
 ### Added

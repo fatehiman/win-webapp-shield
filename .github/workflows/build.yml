@@ -96,6 +96,42 @@ jobs:
           Write-Host 'icon builder ok'
           exit 0
 
+      - name: Check set-icon.exe
+        # It rewrites a finished exe, and a .NET single file exe carries the whole app
+        # appended after the end of the PE. If that part is mishandled the exe still
+        # looks fine and dies at startup, so the patched exe is actually run here.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path out/set-icon-test | Out-Null
+          Copy-Item dist/decode.exe        out/set-icon-test/patched.exe -Force
+          Copy-Item dist/set-icon.exe      out/set-icon-test/ -Force
+          Copy-Item out/from-svg.ico       out/set-icon-test/patched.ico -Force
+
+          ./out/set-icon-test/set-icon.exe out/set-icon-test/patched.ico out/set-icon-test/patched.exe
+          if ($LASTEXITCODE -ne 0) { throw 'set-icon.exe failed' }
+          if (Test-Path out/set-icon-test/patched.exe.set-icon-backup) { throw 'the backup copy was left behind' }
+
+          # The app inside the exe still has to start and behave.
+          $output = & ./out/set-icon-test/patched.exe 2>&1 | Out-String
+          if ($output -match 'application bundle') { throw "the patched exe no longer starts: $output" }
+          if ($output -notmatch 'USAGE') { throw "the patched exe printed something unexpected: $output" }
+
+          Add-Type -AssemblyName System.Drawing
+          $fromExe = [System.Drawing.Icon]::ExtractAssociatedIcon((Resolve-Path out/set-icon-test/patched.exe).Path).ToBitmap()
+          $fromIco = (New-Object System.Drawing.Icon((Resolve-Path out/set-icon-test/patched.ico).Path, 32, 32)).ToBitmap()
+          for ($y = 0; $y -lt 32; $y++) {
+            for ($x = 0; $x -lt 32; $x++) {
+              if ($fromExe.GetPixel($x, $y) -ne $fromIco.GetPixel($x, $y)) {
+                throw "the exe icon does not match the .ico at $x,$y"
+              }
+            }
+          }
+
+          Remove-Item out/set-icon-test -Recurse -Force
+          Write-Host 'set-icon ok'
+          exit 0
+
       - name: Smoke test the wrapper
         # Starts the real exe with 18 different .conf files and reads back what
         # Windows created. The hosted runner does give a usable desktop session,

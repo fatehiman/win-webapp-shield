@@ -238,6 +238,7 @@ running window to the front instead of showing an error.
 | `encode.exe` | CLI: encrypt a file. `encode.exe "file" "password"` |
 | `decode.exe` | CLI: decrypt a file. `decode.exe "file" "password"` |
 | `setup.exe` | Installs the WebView2 runtime if it is missing. |
+| `set-icon.exe` | Gives a built exe the icon of the `.ico` next to it. Run it with no arguments. |
 | `mstodo.conf` | The fully commented sample config. |
 | `app.ico` | The generic icon, drawn from code by `tools/make-icon.ps1`. |
 
@@ -269,6 +270,7 @@ src/Cli/            source shared by encode and decode
 src/Encode/         encode.exe
 src/Decode/         decode.exe
 src/Setup/          setup.exe, the WebView2 prerequisite installer
+src/SetIcon/        set-icon.exe, changes the icon of a built exe
 samples/            the fully commented mstodo.conf
 docs/               CONFIG.md, CRYPTO.md, ICONS.md, BUILD.md
 icons/              .ico files you build for your apps (not committed)

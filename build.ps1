@@ -9,6 +9,7 @@
         encode.exe         encrypts a .conf file
         decode.exe         decrypts a .conf file
         setup.exe          installs the Microsoft Edge WebView2 Runtime if missing
+        set-icon.exe       gives an already built exe the icon of an .ico next to it
 
     You rename webappshield.exe to whatever you like. The app looks for a .conf
     file with its own name, so mstodo.exe reads mstodo.conf.
@@ -22,6 +23,8 @@
     and Alt+Tab show it for the exe itself. Needs -AppName. The file is also copied
     next to the exe, because the window and tray icon come from the .conf at run
     time. tools\make-app-icon.ps1 produces a suitable .ico.
+
+    For an exe you already have, set-icon.exe does the same job without a rebuild.
 
 .PARAMETER Runtime
     Target runtime identifier. win-x64 (default), win-arm64 or win-x86.
@@ -86,6 +89,7 @@ $projects = @(
     @{ Name = 'encode';       Path = 'src\Encode\Encode.csproj' }
     @{ Name = 'decode';       Path = 'src\Decode\Decode.csproj' }
     @{ Name = 'setup';        Path = 'src\Setup\Setup.csproj' }
+    @{ Name = 'set-icon';     Path = 'src\SetIcon\SetIcon.csproj' }
 )
 
 foreach ($project in $projects) {

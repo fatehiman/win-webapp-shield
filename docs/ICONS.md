@@ -5,7 +5,7 @@ There are **two** icons to think about, and they come from different places:
 
 | what you see | where it comes from | how to set it |
 |---|---|---|
-| the exe in Explorer, the taskbar, Alt+Tab, pinned shortcuts | compiled into the exe as a Win32 resource | `build.ps1 -AppIcon` |
+| the exe in Explorer, the taskbar, Alt+Tab, pinned shortcuts | stored in the exe as a Win32 resource | `build.ps1 -AppIcon`, or `set-icon.exe` on an exe you already have |
 | the window title bar, the tray icon, the tray tooltip | the `.ico` file named by `icon` in the `.conf`, read at run time | `"icon": "mstodo.ico"` |
 
 Setting only the first leaves the window showing the generic icon. Setting only the
@@ -23,6 +23,76 @@ in, copies the `.ico` next to the exe, and points the generated `.conf` at it.
 
 That gives you `dist\mstodo.exe`, `dist\mstodo.ico` and a `dist\mstodo.conf` whose
 `icon` line already points at it.
+
+---
+
+## Without a rebuild: set-icon.exe
+
+`build.ps1 -AppIcon` needs the source and the .NET SDK. When you already have a built
+`webappshield.exe` — from a release, say — `set-icon.exe` does the same to it:
+
+```
+C:pps\mstodo    mstodo.exe        <- webappshield.exe, renamed
+    mstodo.ico        <- made by make-app-icon.ps1, or any .ico
+    mstodo.conf
+    set-icon.exe
+```
+
+Double click `set-icon.exe`, or run it from a prompt:
+
+```
+Icon : C:pps\mstodo\mstodo.ico
+Exe  : C:pps\mstodo\mstodo.exe
+       16x16 32-bit BMP
+       ...
+       256x256 32-bit PNG
+Done. mstodo.exe now carries mstodo.ico.
+```
+
+With no arguments it takes the **first `.ico` in its own folder**, sorted by name, and
+the exe with the **same base name**. Either can be named instead:
+
+```powershell
+.\set-icon.exe mstodo.ico              # that icon, mstodo.exe
+.\set-icon.exe brand.ico mstodo.exe    # both named
+```
+
+Set the `icon` line in the `.conf` as well, or the window and the tray keep the old
+one:
+
+```json
+"icon": "mstodo.ico",
+```
+
+A few things worth knowing:
+
+- **Explorer caches icons.** The new icon shows up at once in a fresh folder window,
+  but a pinned shortcut or a stale thumbnail can lag. The taskbar and Alt+Tab pick it
+  up the next time the app starts.
+- **The app must not be running**, and the exe must not be open in another program.
+  Windows refuses to edit a file that is in use, and `set-icon` says so.
+- **A code signed exe is refused.** Rewriting it would break the signature anyway.
+- Every icon already inside the exe is replaced, not added to.
+- A copy of the exe is kept as `<name>.exe.set-icon-backup` while the work is going on
+  and removed once it has gone through. If you ever see one left behind, the original
+  is in it.
+
+### Why this is not just a resource edit
+
+A `.NET` single file exe is a small native program with the whole app appended after
+the end of the last PE section, and the offsets inside that block count from the start
+of the file. Windows rewrites the program when it stores a resource, which moves that
+end. Ordinary resource editors leave the app pointing at nothing:
+
+```
+Failure processing application bundle; possible file corruption.
+```
+
+`set-icon` takes the block off, lets Windows write the icon, appends the block again
+and shifts every offset in it — the marker in the native part, the deps.json and
+runtimeconfig.json locations, and one per file inside the app. That is why it works on
+the wrapper, and why it stops rather than guesses when the appended data is not a
+bundle it recognises.
 
 ---
 

@@ -24,10 +24,11 @@ The result lands in `.\dist`:
 | `encode.exe` | ~13 MB | encrypt a `.conf` |
 | `decode.exe` | ~13 MB | decrypt a `.conf` |
 | `setup.exe` | ~13 MB | install the WebView2 runtime if missing |
+| `set-icon.exe` | ~11 MB | give an already built exe the icon of an `.ico` next to it |
 | `mstodo.conf` | | the fully commented sample config |
 | `app.ico` | | a default icon |
 
-All four are **self-contained single files**: the .NET runtime is inside them, so they
+All five are **self-contained single files**: the .NET runtime is inside them, so they
 run on a machine with no .NET installed.
 
 ### Options
@@ -95,6 +96,7 @@ src/Cli/              CliProgram.cs, compiled into both CLI tools
 src/Encode/           encode.exe  (CliProgram without DECODE_MODE)
 src/Decode/           decode.exe  (CliProgram with    DECODE_MODE)
 src/Setup/            setup.exe, the WebView2 prerequisite installer
+src/SetIcon/          set-icon.exe, the icon of a built exe, changed in place
 
 samples/              the fully commented mstodo.conf
 icons/                .ico files you build per app (not committed, see icons/README.md)
