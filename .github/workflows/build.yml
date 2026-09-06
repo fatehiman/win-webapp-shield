@@ -51,6 +51,9 @@ jobs:
           if ($LASTEXITCODE -eq 0) { throw 'a wrong password should not succeed' }
 
           Write-Host 'encryption round trip ok'
+          # The wrong-password call above left $LASTEXITCODE at 3 on purpose. pwsh
+          # steps report that as the step result, so clear it deliberately.
+          exit 0
 
       - name: Smoke test the wrapper
         # Informational: this starts real windows and reads their Win32 styles. Hosted
@@ -65,6 +68,7 @@ jobs:
         run: |
           ./dist/setup.exe --silent
           if ($LASTEXITCODE -ne 0) { throw 'setup.exe reported a problem' }
+          exit 0
 
       - name: Upload dist
         uses: actions/upload-artifact@v4
