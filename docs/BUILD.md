@@ -1,0 +1,152 @@
+# Building
+
+## What you need
+
+- **.NET SDK 8.0** or newer — <https://dotnet.microsoft.com/download>
+- **Windows** — the wrapper is a WinForms app, so it only builds on Windows
+- an internet connection the first time, to restore the WebView2 NuGet package
+
+Nothing else. No Node, no Visual Studio, no C++ toolchain.
+
+## Build everything
+
+```powershell
+git clone https://github.com/fatehiman/win-webapp-shield.git
+cd win-webapp-shield
+.\build.ps1
+```
+
+The result lands in `.\dist`:
+
+| file | size | what it is |
+|---|---|---|
+| `webappshield.exe` | ~65 MB | the wrapper — rename it to whatever you like |
+| `encode.exe` | ~13 MB | encrypt a `.conf` |
+| `decode.exe` | ~13 MB | decrypt a `.conf` |
+| `setup.exe` | ~13 MB | install the WebView2 runtime if missing |
+| `mstodo.conf` | | the fully commented sample config |
+| `app.ico` | | a default icon |
+
+All four are **self-contained single files**: the .NET runtime is inside them, so they
+run on a machine with no .NET installed.
+
+### Options
+
+```powershell
+.\build.ps1 -AppName mstodo     # also drop a renamed copy: dist\mstodo.exe + mstodo.conf
+.\build.ps1 -Runtime win-arm64  # win-x64 (default), win-arm64, win-x86
+.\build.ps1 -Clean              # wipe dist, artifacts and every bin/obj first
+```
+
+## Build one project by hand
+
+```powershell
+dotnet publish src\WebAppShield\WebAppShield.csproj -c Release -r win-x64 --self-contained true -o out
+```
+
+## Why the wrapper is 65 MB and the CLI tools are 13 MB
+
+The wrapper carries the whole .NET desktop runtime, including WinForms, and WinForms
+cannot be trimmed safely (it finds types by reflection). The CLI tools have no UI, so
+they are published with `PublishTrimmed` and shrink to about a fifth of the size.
+
+Want a 2 MB wrapper instead? Publish it framework-dependent and install the
+[.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) on the
+target machine:
+
+```powershell
+dotnet publish src\WebAppShield\WebAppShield.csproj -c Release -r win-x64 `
+  --self-contained false -p:PublishSingleFile=true -o out-small
+```
+
+## Renaming the exe
+
+The app finds its config from its **own file name at run time**
+(`Environment.ProcessPath`), so renaming a built exe is all you need:
+
+```
+webappshield.exe  ->  mstodo.exe   reads mstodo.conf, writes mstodo.session
+webappshield.exe  ->  jira.exe     reads jira.conf,   writes jira.session
+```
+
+You do not have to rebuild for each wrapped app. One build, many copies.
+
+The single-instance lock is keyed on the full exe path, so two copies in two folders
+run side by side and keep separate browser profiles.
+
+## Project layout
+
+```
+src/WebAppShield/     the wrapper: WinForms window + WebView2 + tray + sleep logic
+  Program.cs            startup: paths, config, single instance, WebView2 check
+  AppConfig.cs          every setting, with defaults and validation
+  ConfigLoader.cs       find, decrypt, parse the .conf
+  SessionStore.cs       the .session scratch file
+  MainForm.cs           the window, the tray, sleep and wake
+  SleepManager.cs       when to drop the browser
+  MonitorHelper.cs      monitor numbering and placement
+  SingleInstance.cs     the per-exe-path lock
+  Dialogs.cs            error boxes and the WebView2-missing dialog
+  NativeMethods.cs      the few Win32 calls that are needed
+
+src/Shield.Crypto/    the AES-256-GCM file format, shared by everything
+src/Cli/              CliProgram.cs, compiled into both CLI tools
+src/Encode/           encode.exe  (CliProgram without DECODE_MODE)
+src/Decode/           decode.exe  (CliProgram with    DECODE_MODE)
+src/Setup/            setup.exe, the WebView2 prerequisite installer
+
+samples/              the fully commented mstodo.conf
+tools/make-icon.ps1   draws app.ico from code, no image editor needed
+build.ps1             publishes everything into dist
+```
+
+`encode.exe` and `decode.exe` are the same source file. `Decode.csproj` defines
+`DECODE_MODE`, which flips the direction and the help text. That is why the two tools
+can never disagree about the file format.
+
+## Testing
+
+```powershell
+.\build.ps1
+.\tools\smoke-test.ps1              # about 1 minute
+.\tools\smoke-test.ps1 -IncludeSlow # about 4 minutes, adds the sleep/wake test
+```
+
+The script starts the real exe with 14 different `.conf` files and checks what Windows
+actually created: window styles read back with `GetWindowLong`, whether the close
+button carries `CS_NOCLOSE`, window size and position in pixels, process exit codes,
+the `.session` file contents, the `WASENC1` header, and the browser child processes
+before and after a sleep. Nothing is mocked.
+
+```
+== 14. sleep-after frees the browser while the window is hidden
+  [pass] the embedded browser is running (found 1)
+  [pass] the browser processes were shut down
+  [pass] memory dropped (56.9 MB -> 10.5 MB)
+  [pass] opening it again restarted the browser (found 1)
+
+passed: 57   failed: 0
+```
+
+Add `-KeepFiles` to keep the temporary folders (with any `app.error.log`) for a look.
+
+## Continuous integration
+
+[`.github/workflows/build.yml`](../.github/workflows/build.yml) builds everything on
+`windows-latest` for every push, and uploads `dist` as a build artifact. Pushing a tag
+like `v1.0.0` also creates a GitHub release with a zip attached.
+
+The encryption round trip and the `setup.exe` check are hard gates there. The smoke
+test also runs, but only for information: a hosted runner does not promise a usable
+desktop session, so window checks can fail for reasons that have nothing to do with
+the code. Run it on a real desktop before cutting a release.
+
+## Regenerating the icon
+
+```powershell
+.\tools\make-icon.ps1
+```
+
+It draws the shield with `System.Drawing` and writes a real multi-size `.ico`
+(16 / 24 / 32 / 48 / 64 / 128 / 256 px, PNG-compressed entries). `build.ps1` runs it
+for you. To use your own artwork, just replace `src/WebAppShield/app.ico`.

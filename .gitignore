@@ -1,0 +1,15 @@
+# build output
+[Bb]in/
+[Oo]bj/
+dist/
+artifacts/
+out/
+out-small/
+*.user
+*.suo
+.vs/
+
+# runtime files produced next to a wrapped exe
+*.session
+*.session.tmp
+*.conf.bak

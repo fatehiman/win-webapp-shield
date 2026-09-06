@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>WebAppShield</RootNamespace>
+
+    <!-- Default product name. build.ps1 overrides AssemblyName to produce e.g. mstodo.exe -->
+    <AssemblyName>webappshield</AssemblyName>
+
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>none</DebugType>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <Version>1.0.0</Version>
+    <Company>win-webapp-shield</Company>
+    <Product>Win WebApp Shield</Product>
+  </PropertyGroup>
+
+  <!-- app.ico is checked in, and tools/make-icon.ps1 can regenerate it. -->
+  <PropertyGroup Condition="Exists('app.ico')">
+    <ApplicationIcon>app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shield.Crypto\Shield.Crypto.csproj" />
+  </ItemGroup>
+
+  <!--
+    The WebView2 package ships a WinForms control and a WPF control. Only the WinForms
+    one is used here. Dropping the WPF assembly removes a WindowsBase version conflict
+    and makes the published exe a little smaller.
+  -->
+  <Target Name="DropWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(FileName)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
+</Project>

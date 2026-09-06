@@ -1,0 +1,101 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build and publish everything
+        shell: pwsh
+        run: ./build.ps1 -AppName mstodo
+
+      - name: Round-trip the encryption
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Content -Path plain.conf -Value '{ "url": "https://example.com" }' -Encoding utf8
+          $before = Get-Content plain.conf -Raw
+
+          ./dist/encode.exe "plain.conf" "Kopolop0_90u"
+          if ($LASTEXITCODE -ne 0) { throw 'encode.exe failed' }
+
+          $bytes = [System.IO.File]::ReadAllBytes('plain.conf')
+          $magic = [System.Text.Encoding]::ASCII.GetString($bytes, 0, 7)
+          if ($magic -ne 'WASENC1') { throw "expected the WASENC1 header, found '$magic'" }
+
+          ./dist/decode.exe "plain.conf" "Kopolop0_90u"
+          if ($LASTEXITCODE -ne 0) { throw 'decode.exe failed' }
+
+          $after = Get-Content plain.conf -Raw
+          if ($before -ne $after) { throw 'the round trip changed the file' }
+
+          ./dist/decode.exe "plain.conf" "wrong-password" "should-not-exist.conf"
+          if ($LASTEXITCODE -eq 0) { throw 'a wrong password should not succeed' }
+
+          Write-Host 'encryption round trip ok'
+
+      - name: Smoke test the wrapper
+        # Informational: this starts real windows and reads their Win32 styles. Hosted
+        # runners do not guarantee a usable desktop session, so a failure here is not
+        # treated as a broken build. Run it locally before a release.
+        continue-on-error: true
+        shell: pwsh
+        run: ./tools/smoke-test.ps1
+
+      - name: Check that setup.exe detects the runtime
+        shell: pwsh
+        run: |
+          ./dist/setup.exe --silent
+          if ($LASTEXITCODE -ne 0) { throw 'setup.exe reported a problem' }
+
+      - name: Upload dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-webapp-shield-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build and publish everything
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Zip it
+        shell: pwsh
+        run: Compress-Archive -Path dist/* -DestinationPath "win-webapp-shield-${{ github.ref_name }}-win-x64.zip"
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: win-webapp-shield-${{ github.ref_name }}-win-x64.zip
+          generate_release_notes: true
