@@ -93,6 +93,10 @@ foreach ($project in $projects) {
 }
 
 Step 'Copying the sample configuration'
+# A wrapper run from .\dist leaves these behind; they are not part of a release.
+# -Include only filters when the path itself ends in a wildcard.
+Get-ChildItem -Path (Join-Path $dist '*') -Include '*.session', '*.session.tmp', '*.conf.bak', '*.error.log' -File -ErrorAction SilentlyContinue |
+    Remove-Item -Force
 Copy-Item (Join-Path $root 'samples\*.conf') $dist -Force
 Copy-Item (Join-Path $root 'samples\app.ico') $dist -Force
 Copy-Item (Join-Path $root 'README.md') $dist -Force
