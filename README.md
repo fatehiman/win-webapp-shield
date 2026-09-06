@@ -28,6 +28,7 @@ mstodo.session    <- written by the app: last window position (optional)
 | **Monitor & position** | Pick a monitor, centre it, or remember where the user left it. |
 | **Starts hidden** | `"window-state": "tray"` never draws the window, not even for a moment. |
 | **Frees memory** | Drops the whole browser after the window has been out of sight for a while. |
+| **Real app icon** | Build the wrapped app's own logo into the exe, the window and the tray. |
 | **Loading spinner** | `| / - \` after the title while a page loads, DOS style. |
 
 ---
@@ -102,6 +103,39 @@ bar, not a drawn copy.
 - Tray **on** → X hides the window to the tray, like most tray apps. Quit from the
   tray menu → *Exit*.
 - Force it either way with `"close-action": "tray"` or `"exit"`.
+
+---
+
+## Giving it the right icon
+
+A wrapper showing a generic icon does not feel like the app it wraps. Two commands:
+
+```powershell
+.\tools\make-app-icon.ps1 -Preset todo -Out .\icons\mstodo.ico
+.\build.ps1 -AppName mstodo -AppIcon .\icons\mstodo.ico
+```
+
+You get `dist\mstodo.exe` with the logo compiled in, so Explorer, the taskbar and
+Alt+Tab show it, plus `dist\mstodo.ico` and a `dist\mstodo.conf` already pointing at
+it, so the window title bar and the tray show it too.
+
+`make-app-icon.ps1` turns an SVG, PNG or existing icon into a proper multi-size `.ico`
+(16 to 256 px, small sizes as DIB and large ones as PNG, every entry decoded and
+verified before it reports success). `-ListPresets` lists the Microsoft 365 logos that
+Microsoft publishes on its own brand-icon CDN:
+
+```
+todo  outlook  teams  onenote  excel  word  powerpoint  onedrive
+sharepoint  access  visio  project  forms  sway  stream  delve  yammer  loop
+```
+
+Anything else: `-Source https://example.com/logo.svg`, or a local file. Prefer an SVG —
+a site's favicon is usually 32 px and looks soft the moment Windows wants 256.
+
+The logos themselves are **not** committed to this repo, because a logo is a trademark
+and not mine to pass on under the MIT licence. The recipe is committed; you run it.
+
+Full details: **[docs/ICONS.md](docs/ICONS.md)**.
 
 ---
 
@@ -191,7 +225,7 @@ running window to the front instead of showing an error.
 | `decode.exe` | CLI: decrypt a file. `decode.exe "file" "password"` |
 | `setup.exe` | Installs the WebView2 runtime if it is missing. |
 | `mstodo.conf` | The fully commented sample config. |
-| `app.ico` | A default icon you can replace. |
+| `app.ico` | The generic icon, drawn from code by `tools/make-icon.ps1`. |
 
 ---
 
@@ -222,8 +256,11 @@ src/Encode/         encode.exe
 src/Decode/         decode.exe
 src/Setup/          setup.exe, the WebView2 prerequisite installer
 samples/            the fully commented mstodo.conf
-docs/               CONFIG.md, CRYPTO.md, BUILD.md
-tools/make-icon.ps1 draws app.ico, no image editor needed
+docs/               CONFIG.md, CRYPTO.md, ICONS.md, BUILD.md
+icons/              .ico files you build for your apps (not committed)
+tools/make-icon.ps1     draws the generic app.ico, no image editor needed
+tools/make-app-icon.ps1 turns an SVG, PNG or URL into a multi-size .ico
+tools/smoke-test.ps1    starts the real exe and checks what Windows created
 ```
 
 ---

@@ -29,9 +29,13 @@
     <Product>Win WebApp Shield</Product>
   </PropertyGroup>
 
-  <!-- app.ico is checked in, and tools/make-icon.ps1 can regenerate it. -->
-  <PropertyGroup Condition="Exists('app.ico')">
-    <ApplicationIcon>app.ico</ApplicationIcon>
+  <!--
+    app.ico is checked in, and tools/make-icon.ps1 can regenerate it. The condition
+    lets a build override it, e.g. -p:ApplicationIcon=C:\path\mstodo.ico, so one
+    source tree can produce exes carrying different icons.
+  -->
+  <PropertyGroup>
+    <ApplicationIcon Condition="'$(ApplicationIcon)' == '' And Exists('app.ico')">app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

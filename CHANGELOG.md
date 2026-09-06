@@ -1,5 +1,52 @@
 # Changelog
 
+## 1.2.0 - 2026-09-06
+
+### Added
+
+- `tools/make-app-icon.ps1`: turns an SVG, PNG, JPG, BMP or existing `.ico` - from a
+  local file, an http(s) URL, or a `-Preset` name - into a proper multi-size Windows
+  `.ico` (16, 20, 24, 32, 40, 48, 64, 128, 256 px). `-Padding` leaves room around a
+  logo drawn edge to edge, `-Background` fills the transparent area, `-Sizes` picks
+  which sizes go in.
+- `-Preset` covers the Microsoft 365 product logos that Microsoft publishes as SVG on
+  its own Fluent brand-icon CDN: todo, outlook, teams, onenote, excel, word,
+  powerpoint, onedrive, sharepoint, access, visio, project, forms, sway, stream,
+  delve, yammer, loop. `-ListPresets` prints them.
+- `build.ps1 -AppIcon <file.ico>`: compiles that icon into the named copy of the
+  wrapper as a Win32 resource, copies the `.ico` next to the exe, and points the
+  generated `.conf` at it - so Explorer, the taskbar, Alt+Tab, the window title bar
+  and the tray all show the right icon. Needs `-AppName`.
+- `docs/ICONS.md`, and `tools/lib/IcoWriter.ps1` which writes and verifies the `.ico`
+  container.
+
+### Notes
+
+- Icon entries up to 48 px are stored as an uncompressed 32-bit DIB and larger ones as
+  PNG. Windows reads PNG entries at any size from Vista onwards, but plenty of other
+  code does not - the .NET Framework's `System.Drawing.Icon` throws on one - and the
+  small sizes are the ones every part of the shell touches.
+- Every entry is read back and decoded before the tool reports success, so a broken
+  icon is caught at build time rather than as a blank square on a desktop.
+- `build.ps1 -AppIcon` clears `obj\Release` and `bin\Release` first. MSBuild decides
+  whether to recompile from file timestamps and a changed property does not count, so
+  without that the exe silently keeps the icon from the previous publish.
+- `AssemblyName` is deliberately not overridden for the named build: doing so makes
+  NuGet restore fail with "Ambiguous project name". The exe is renamed afterwards,
+  which is enough because the wrapper reads its own file name at run time.
+- SVG support is a subset aimed at logos: `viewBox`, `path`, `rect`, `circle`,
+  `ellipse`, `polygon`, `polyline`, `line`, `g` with `transform`, and linear and
+  radial gradients. Text, filters, clip paths and masks are not handled.
+- The `.ico` files in `icons/` are not committed. A company logo is a trademark and
+  not this project's to pass on under the MIT licence, so the repo ships the recipe.
+  `tools/test-assets/sample-logo.svg` is original artwork used to test the renderer.
+
+### Fixed
+
+- SVG `transform` lists were applied in the wrong order. SVG reads them right to left
+  while WPF applies a `TransformGroup` left to right, so `translate(24 40) rotate(45)`
+  rotated the already-moved shape about the origin and flung it off the canvas.
+
 ## 1.1.0 - 2026-09-06
 
 ### Added

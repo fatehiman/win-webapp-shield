@@ -9,6 +9,10 @@ out-small/
 *.suo
 .vs/
 
+# Other companies' logos, built on demand by tools/make-app-icon.ps1.
+# See icons/README.md for why they are not committed.
+icons/*.ico
+
 # runtime files produced next to a wrapped exe
 *.session
 *.session.tmp

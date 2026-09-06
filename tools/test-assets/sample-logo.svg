@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!--
+    Test artwork for tools/make-app-icon.ps1. Not a real logo - it exists to
+    exercise the SVG features the tool claims to support, so a regression in the
+    renderer is caught by CI rather than by someone's blank desktop icon.
+  -->
+  <defs>
+    <linearGradient id="sky" x1="4" y1="44" x2="44" y2="4" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1b4fa8"/>
+      <stop offset="1" stop-color="#4aa3f5"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.15"/>
+    </radialGradient>
+  </defs>
+
+  <!-- fill="none" must be skipped, not painted black -->
+  <rect width="48" height="48" fill="none"/>
+
+  <!-- rect with rounded corners + a userSpaceOnUse linear gradient -->
+  <rect x="2" y="2" width="44" height="44" rx="10" ry="10" fill="url(#sky)"/>
+
+  <!-- circle with a radial gradient -->
+  <circle cx="24" cy="17" r="8" fill="url(#glow)"/>
+
+  <!-- path with arcs and relative commands, the hard part of the parser -->
+  <path d="M12,32 a12,12 0 0,0 24,0 l-4,0 a8,8 0 0,1 -16,0 Z" fill="#ffffff" fill-opacity="0.85"/>
+
+  <!-- group with a transform, holding a polygon and an ellipse -->
+  <g transform="translate(24 40) rotate(45)" fill="#ffd24a">
+    <polygon points="-3,-3 3,-3 3,3 -3,3"/>
+  </g>
+  <ellipse cx="24" cy="17" rx="3" ry="3" fill="#1b4fa8"/>
+</svg>

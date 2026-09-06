@@ -172,6 +172,11 @@ opens the window, which is the cheapest possible startup.
 An absolute path, or a path relative to the exe folder. A missing or broken file is
 ignored and the built-in icon is used; it never stops the app.
 
+This sets the **window title bar, the tray icon and the tray tooltip**. The icon
+Explorer and the taskbar show for the exe file is a different thing, compiled into the
+exe — `build.ps1 -AppIcon` sets both at once. See [ICONS.md](ICONS.md), and use
+`tools/make-app-icon.ps1` to build a proper multi-size `.ico` from a logo.
+
 ```jsonc
 "icon": "app.ico"
 "icon": "icons\\mstodo.ico"

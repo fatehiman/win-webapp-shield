@@ -55,6 +55,47 @@ jobs:
           # steps report that as the step result, so clear it deliberately.
           exit 0
 
+      - name: Check the icon builder
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # SVG path: exercises paths with arcs, rects, circles, ellipses, polygons,
+          # groups with transforms, and linear and radial gradients.
+          ./tools/make-app-icon.ps1 -Source ./tools/test-assets/sample-logo.svg -Out out/from-svg.ico
+          if (-not (Test-Path out/from-svg.ico)) { throw 'no .ico was produced from the SVG' }
+
+          $bytes = [System.IO.File]::ReadAllBytes('out/from-svg.ico')
+          if ([System.BitConverter]::ToUInt16($bytes, 2) -ne 1) { throw 'the file is not an icon' }
+          $count = [System.BitConverter]::ToUInt16($bytes, 4)
+          if ($count -ne 9) { throw "expected 9 sizes in the .ico, found $count" }
+
+          # Raster path, and it must also accept an .ico as input.
+          ./tools/make-app-icon.ps1 -Source out/from-svg.ico -Out out/from-ico.ico -Sizes 16,32,48,256
+          $count = [System.BitConverter]::ToUInt16([System.IO.File]::ReadAllBytes('out/from-ico.ico'), 4)
+          if ($count -ne 4) { throw "expected 4 sizes, found $count" }
+
+          # A build that compiles an icon into the exe must actually change it.
+          ./build.ps1 -AppName icontest -AppIcon out/from-svg.ico
+          Add-Type -AssemblyName System.Drawing
+          $wrapped = [System.Drawing.Icon]::ExtractAssociatedIcon((Resolve-Path dist/icontest.exe).Path).ToBitmap()
+          $generic = [System.Drawing.Icon]::ExtractAssociatedIcon((Resolve-Path dist/webappshield.exe).Path).ToBitmap()
+          $same = $true
+          for ($y = 0; $y -lt $wrapped.Height -and $same; $y++) {
+            for ($x = 0; $x -lt $wrapped.Width; $x++) {
+              if ($wrapped.GetPixel($x, $y) -ne $generic.GetPixel($x, $y)) { $same = $false; break }
+            }
+          }
+          if ($same) { throw 'icontest.exe carries the same icon as webappshield.exe, so -AppIcon did nothing' }
+
+          $iconLine = (Select-String -Path dist/icontest.conf -Pattern '^\s*"icon"').Line
+          if ($iconLine -notmatch 'icontest\.ico') { throw "the generated conf was not pointed at the icon: $iconLine" }
+          if (-not (Test-Path dist/icontest.ico)) { throw 'the .ico was not copied next to the exe' }
+
+          Remove-Item dist/icontest.exe, dist/icontest.conf, dist/icontest.ico -Force
+          Write-Host 'icon builder ok'
+          exit 0
+
       - name: Smoke test the wrapper
         # Starts the real exe with 16 different .conf files and reads back what
         # Windows created. The hosted runner does give a usable desktop session,

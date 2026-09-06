@@ -97,8 +97,13 @@ src/Decode/           decode.exe  (CliProgram with    DECODE_MODE)
 src/Setup/            setup.exe, the WebView2 prerequisite installer
 
 samples/              the fully commented mstodo.conf
-tools/make-icon.ps1   draws app.ico from code, no image editor needed
-build.ps1             publishes everything into dist
+icons/                .ico files you build per app (not committed, see icons/README.md)
+
+tools/make-icon.ps1      draws the generic app.ico from code
+tools/make-app-icon.ps1  SVG/PNG/URL -> multi-size .ico, with presets for MS 365 logos
+tools/lib/IcoWriter.ps1  writes and verifies the .ico container
+tools/smoke-test.ps1     starts the real exe and checks what Windows created
+build.ps1                publishes everything into dist
 ```
 
 `encode.exe` and `decode.exe` are the same source file. `Decode.csproj` defines
