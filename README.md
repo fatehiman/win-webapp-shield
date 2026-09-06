@@ -26,7 +26,8 @@ mstodo.session    <- written by the app: last window position (optional)
 | **Any window style** | Full title bar, only some buttons, or no title bar at all. |
 | **Tray icon** | Close to tray, Open / Open in browser / Exit menu. |
 | **Monitor & position** | Pick a monitor, centre it, or remember where the user left it. |
-| **Starts hidden** | `"window-state": "tray"` never draws the window, not even for a moment. |
+| **Starts hidden** | `"window-state": "tray"` never draws the window, and still loads the page. |
+| **Gets out of the way** | `tray-after-load`, `min-after-30`: open, load, then leave. |
 | **Frees memory** | Drops the whole browser after the window has been out of sight for a while. |
 | **Real app icon** | Build the wrapped app's own logo into the exe, the window and the tray. |
 | **Loading spinner** | `| / - \` after the title while a page loads, DOS style. |
@@ -195,6 +196,36 @@ Format details are in [docs/CRYPTO.md](docs/CRYPTO.md).
 
 ---
 
+## Starting out of the way
+
+`"window-state": "tray"` never draws a window — and, since it loads the page in the
+background, the app is ready the moment you open it.
+
+That readiness is not free. Measured with a simple page:
+
+| | total memory |
+|---|---|
+| `"preload": true` (default) | about 366 MB, the wrapper plus 6 browser processes |
+| `"preload": false` | about 47 MB, the wrapper on its own |
+
+`sleep-after` hands it back once the window has been out of sight long enough.
+
+If you would rather have the page loaded *and* the app quiet afterwards, let the window
+open, do its work, and leave:
+
+| `window-state` | what happens |
+|---|---|
+| `"tray-after-load"` | opens normally, goes to the tray once the page has loaded |
+| `"min-after-load"` | opens normally, minimizes once the page has loaded |
+| `"tray-after-10"` | opens normally, goes to the tray 10 seconds later |
+| `"min-after-30"` | opens normally, minimizes 30 seconds later |
+
+Touching the window first cancels it for good — a click, a key, a scroll, or moving or
+resizing it. The timer is there to get the window out of your way, not to take it while
+you are reading.
+
+---
+
 ## Memory
 
 An embedded browser is the expensive part of a wrapper like this. `sleep-after`
@@ -212,8 +243,9 @@ handles it:
 | `30` | Sleep after 30 minutes out of sight. |
 | `"off"` | Never sleep. |
 
-With `"window-state": "tray"` the browser is not started at all until you open the
-window the first time.
+`"window-state": "tray"` starts hidden but still loads the page, so the sleep clock is
+already running when the app starts. `"preload": false` goes back to not starting the
+browser at all until the window is opened the first time.
 
 ---
 
@@ -255,7 +287,7 @@ cd win-webapp-shield
 Needs the .NET SDK 8.0 or newer. Everything lands in `.\dist`.
 See [docs/BUILD.md](docs/BUILD.md) for the details.
 
-To check a build, `.\tools\smoke-test.ps1` starts the real exe with 18 different
+To check a build, `.\tools\smoke-test.ps1` starts the real exe with 24 different
 config files and inspects the windows Windows actually created — styles, sizes, exit
 codes, the session file, and the browser processes before and after a sleep.
 

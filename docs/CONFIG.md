@@ -140,25 +140,97 @@ A saved position that is no longer on any connected screen is also ignored.
 
 ---
 
-### `window-state` — how it starts
+### `window-state` — how it starts, and what happens next
 
 | | |
 |---|---|
 | type | string |
 | default | `"normal"` |
 
+Four values open the window and leave it alone:
+
 | value | meaning |
 |---|---|
 | `"normal"` | a normal window |
-| `"min"` | minimized to the taskbar |
+| `"min"` | minimized |
 | `"max"` | maximized |
-| `"tray"` | hidden in the notification area |
+| `"tray"` | hidden in the notification area, never drawn at all |
 
-`"tray"` really means hidden: the window is never mapped on screen, so there is no
-flash. The embedded browser is not started either — it starts the first time the user
-opens the window, which is the cheapest possible startup.
+Four more open a **normal window** and then get it out of the way by themselves:
 
-`"tray"` turns the tray icon on by itself.
+| value | meaning |
+|---|---|
+| `"tray-after-load"` | goes to the tray as soon as the page has loaded |
+| `"min-after-load"` | minimizes as soon as the page has loaded |
+| `"tray-after-<n>"` | goes to the tray `n` seconds after opening |
+| `"min-after-<n>"` | minimizes `n` seconds after opening |
+
+`n` is seconds, up to 86400 (a day), and may have a decimal point:
+`"tray-after-10"`, `"min-after-30"`, `"tray-after-2.5"`.
+
+`"tray"`, `"tray-after-load"` and `"tray-after-<n>"` all turn the tray icon on by
+themselves, whatever `systray` says.
+
+#### It backs off if you are using the window
+
+With any of the waiting forms, touching the window cancels the hide **for good**:
+
+- clicking, typing or scrolling in the page
+- clicking the title bar or a border
+- moving or resizing the window
+
+The timer is there to get the window out of your way once you have seen the page load,
+not to snatch it while you are reading. Nothing brings the timer back; the window then
+behaves like a plain `"normal"` one for the rest of the session.
+
+To catch a click on the **page**, a three line listener is added to it. The browser
+fills the whole client area and swallows the mouse and the keyboard, so the window
+itself never sees a click, and there is no other reliable way to hear about one. It is
+only added while an auto-hide is actually pending, and removed as soon as that is
+settled.
+
+#### `-after-load` and pages that never finish
+
+"Loaded" means the browser reported the first navigation as complete — including a
+navigation that **failed**, since the alternative is a window that stays for ever.
+If nothing is reported at all within 60 seconds, the window goes anyway.
+
+#### `min-after-<n>` and `minimize-to-tray`
+
+`min-after-<n>` does exactly what pressing the Minimize button does, so with
+`"minimize-to-tray": true` it ends up in the tray rather than on the taskbar — the
+same as `"window-state": "min"` already does. Set `minimize-to-tray` to `false` if you
+want a taskbar button.
+
+---
+
+### `preload` — load the page while the window is hidden
+
+| | |
+|---|---|
+| type | boolean |
+| default | `true` |
+
+Only matters for `"window-state": "tray"`, where no window is ever shown.
+
+- `true` — the browser starts and the page loads straight away, so it is ready the
+  moment the user opens the window
+- `false` — nothing is loaded until the window is opened the first time
+
+It is not a small difference. Measured on one machine with a simple page:
+
+| | total memory | processes |
+|---|---|---|
+| `"preload": true` | about 366 MB | the wrapper plus 6 browser processes |
+| `"preload": false` | about 47 MB | the wrapper on its own |
+
+`sleep-after` hands that memory back once the window has been out of sight for long
+enough, so with it set, `true` only costs that while it lasts. Which one you want comes
+down to whether the page must be ready instantly, or whether the app should sit almost
+free until somebody asks for it.
+
+The waiting forms of `window-state` are the other way to have both: the page loads in a
+real window, and the window leaves once it is done.
 
 ---
 
@@ -192,8 +264,9 @@ exe — `build.ps1 -AppIcon` sets both at once. See [ICONS.md](ICONS.md), and us
 | type | boolean |
 | default | `false` |
 
-If any other setting needs the tray — `tray` in `window-type`, or
-`"window-state": "tray"` — the tray is switched on even when this says `false`.
+If any other setting needs the tray — `tray` in `window-type`, or a `window-state` of
+`"tray"`, `"tray-after-load"` or `"tray-after-<n>"` — the tray is switched on even when
+this says `false`.
 
 ---
 
@@ -230,6 +303,10 @@ Left-click or double-click on the tray icon always opens the window.
 
 Inactivity means the window is **minimized or hidden in the tray**. A window that is
 open on the desktop is never put to sleep, however long the user ignores it.
+
+An app started with `"window-state": "tray"` is inactive from the moment it starts, so
+if it preloaded the page and nobody ever opens the window, this is what hands the
+memory back.
 
 When the limit is reached the app shuts down the whole WebView2 process tree, forces a
 garbage collection and trims its working set. Opening the window again starts the

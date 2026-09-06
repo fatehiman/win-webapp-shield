@@ -133,9 +133,9 @@ jobs:
           exit 0
 
       - name: Smoke test the wrapper
-        # Starts the real exe with 18 different .conf files and reads back what
+        # Starts the real exe with 24 different .conf files and reads back what
         # Windows created. The hosted runner does give a usable desktop session,
-        # so all 65 fast checks run here. The sleep/wake test (-IncludeSlow) takes
+        # so all 86 fast checks run here. The sleep/wake test (-IncludeSlow) takes
         # minutes of real waiting and is left for a local run before a release.
         shell: pwsh
         run: ./tools/smoke-test.ps1

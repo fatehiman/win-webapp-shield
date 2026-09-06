@@ -52,6 +52,7 @@ public class WwsWin
         public bool HasMaxButton { get { return (Style & 0x00010000) != 0; } }
         public bool HasThickFrame{ get { return (Style & 0x00040000) != 0; } }
         public bool CloseBlocked { get { return (ClassStyle & 0x0200) != 0; } }
+        public bool IsMinimized  { get { return (Style & 0x20000000) != 0; } }
         public bool IsDialog     { get { return ClassName == "#32770"; } }
     }
 
@@ -133,6 +134,87 @@ public class WwsWin
 '@
 }
 
+# --- a stand-in web site ---------------------------------------------------
+# Some checks need to know whether the wrapper really fetched its URL, which no
+# screenshot can answer. A loopback TCP server answers it exactly. TcpListener is
+# used rather than HttpListener because it needs no URL ACL, so this runs as an
+# ordinary user, and it lets a scenario serve whatever HTML it likes.
+
+function Start-PageServer([string]$body = '<!doctype html><title>probe</title><h1>ok</h1>') {
+    foreach ($attempt in 1..20) {
+        $port = Get-Random -Minimum 39000 -Maximum 39900
+        try {
+            $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $port)
+            $listener.Start()
+            return @{
+                Listener = $listener
+                Url      = "http://127.0.0.1:$port/"
+                Body          = $body
+                Accept        = $listener.AcceptTcpClientAsync()
+                WaitedSeconds = 0
+            }
+        }
+        catch { }
+    }
+    throw 'could not open a loopback port for the test web server'
+}
+
+# Returns the request line, e.g. "GET / HTTP/1.1", or $null if nothing asked.
+# How long it took is left in $server.WaitedSeconds, because a slow cold start and a
+# broken one look identical from a pass/fail line.
+#
+# The timeout is generous: starting WebView2 from cold can take a long time on a
+# machine that has already run most of this suite, and these checks are about whether
+# the page is fetched at all, not how quickly.
+function Wait-PageRequest($server, [int]$timeoutSeconds = 120) {
+    $started = Get-Date
+    $deadline = $started.AddSeconds($timeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if ($server.Accept.IsCompleted) {
+            $client = $server.Accept.Result
+            $requestLine = ''
+            try {
+                $stream = $client.GetStream()
+                $stream.ReadTimeout = 4000
+                $buffer = New-Object byte[] 4096
+                $read = $stream.Read($buffer, 0, $buffer.Length)
+                if ($read -gt 0) {
+                    $requestLine = (([System.Text.Encoding]::ASCII.GetString($buffer, 0, $read)) -split "`r`n")[0]
+
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes($server.Body)
+                    $head = "HTTP/1.1 200 OK`r`nContent-Type: text/html; charset=utf-8`r`n" +
+                            "Content-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n"
+                    $headBytes = [System.Text.Encoding]::ASCII.GetBytes($head)
+                    $stream.Write($headBytes, 0, $headBytes.Length)
+                    $stream.Write($bytes, 0, $bytes.Length)
+                    $stream.Flush()
+                }
+            }
+            catch { }
+            finally { try { $client.Close() } catch { } }
+
+            # be ready for whatever it asks for next, favicon and all
+            $server.Accept = $server.Listener.AcceptTcpClientAsync()
+
+            # Chromium opens speculative connections and sends nothing on them. That
+            # is not the page request, so keep waiting for one that actually asks.
+            if ($requestLine) {
+                $server.WaitedSeconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
+                return $requestLine
+            }
+            continue
+        }
+        Start-Sleep -Milliseconds 150
+    }
+    $server.WaitedSeconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
+    return $null
+}
+
+function Stop-PageServer($server) {
+    if ($null -eq $server) { return }
+    try { $server.Listener.Stop() } catch { }
+}
+
 # --- tiny test harness -----------------------------------------------------
 $script:Passed = 0
 $script:Failed = 0
@@ -174,6 +256,17 @@ function New-Case([string]$name, [string]$conf, [string]$appName = 'app') {
 
 function Start-App([string]$dir, [string]$appName = 'app') {
     return Start-Process (Join-Path $dir "$appName.exe") -PassThru
+}
+
+# The app writes <name>.trace.log when WWS_TRACE is set. When a startup-timing check
+# fails, that file says whether the action ran, or what cancelled it - the difference
+# between a bug and someone touching the window mid-run.
+$env:WWS_TRACE = '1'
+
+function Show-Trace([string]$dir, [string]$appName = 'app') {
+    $log = Join-Path $dir "$appName.trace.log"
+    if (-not (Test-Path $log)) { Write-Host '         (no trace log)' -ForegroundColor DarkGray; return }
+    Get-Content $log | ForEach-Object { Write-Host "         $_" -ForegroundColor DarkGray }
 }
 
 # Process.Kill($true) only exists on .NET Core, and Windows PowerShell 5.1 runs on
@@ -330,8 +423,10 @@ try {
     Kill-App $p
 
     # ---------------------------------------------------------------- 6
-    Scenario '6. window-state "tray" never draws a window'
-    $conf = "{ `"url`": `"$Fast`", `"window-type`": `"min+max+close+tray`", `"window-state`": `"tray`", `"systray`": true, `"title`": `"TrayOnly`" }"
+    Scenario '6. window-state "tray" with preload off never draws or loads anything'
+    # preload off on purpose: this is the lightest possible start. Scenario 14 covers
+    # the default, where the page is loaded while the window stays hidden.
+    $conf = "{ `"url`": `"$Fast`", `"window-type`": `"min+max+close+tray`", `"window-state`": `"tray`", `"systray`": true, `"preload`": false, `"title`": `"TrayOnly`" }"
     $dir = New-Case 'tray-start' $conf
     $p = Start-App $dir
     $sawWindow = $false
@@ -512,7 +607,151 @@ try {
     $null = Stop-App $p
 
     # ---------------------------------------------------------------- 14
-    Scenario '14. Resizing shows the size in the title, then hides it'
+    Scenario '14. window-state "tray" loads the page while hidden'
+    $server = Start-PageServer
+    try {
+        $conf = "{ `"url`": `"$($server.Url)`", `"window-state`": `"tray`", `"systray`": true, `"title`": `"Preloaded`", `"sleep-after`": `"off`" }"
+        $dir = New-Case 'tray-preload' $conf
+        $p = Start-App $dir
+
+        $request = Wait-PageRequest $server
+        Check "the page was fetched with the window still hidden, after $($server.WaitedSeconds)s ('$request')" ($request -like 'GET /*')
+        Check 'the process is running' (-not $p.HasExited)
+        $drawn = @([WwsWin]::TopLevel($p.Id) | Where-Object { $_.Visible -and $_.Width -gt 1 })
+        Check 'and no window was drawn to do it' ($drawn.Count -eq 0) "found $($drawn.Count)"
+        Kill-App $p
+    }
+    finally { Stop-PageServer $server }
+
+    # ---------------------------------------------------------------- 15
+    Scenario '15. preload false keeps the browser cold until the window opens'
+    $server = Start-PageServer
+    try {
+        $conf = "{ `"url`": `"$($server.Url)`", `"window-state`": `"tray`", `"systray`": true, `"preload`": false, `"title`": `"Cold`", `"sleep-after`": `"off`" }"
+        $dir = New-Case 'tray-cold' $conf
+        $p = Start-App $dir
+
+        # A short wait on purpose: this asserts nothing arrives, and a scenario that
+        # waits two minutes to prove a negative is not worth the wall clock.
+        $request = Wait-PageRequest $server 25
+        Check 'nothing was fetched' ($null -eq $request) "got '$request'"
+        Check 'the process is running' (-not $p.HasExited)
+        Kill-App $p
+    }
+    finally { Stop-PageServer $server }
+
+    # ---------------------------------------------------------------- 16
+    Scenario '16. window-state "tray-after-2" opens, then goes to the tray'
+    $server = Start-PageServer
+    try {
+        $conf = "{ `"url`": `"$($server.Url)`", `"window-state`": `"tray-after-2`", `"systray`": true, `"title`": `"Deferred`", `"width`": 620, `"height`": 400, `"sleep-after`": `"off`" }"
+        $dir = New-Case 'tray-after-n' $conf
+        $p = Start-App $dir
+
+        $w = Wait-TitledWindow $p 'Deferred'
+        Check 'the window opened normally first' ($null -ne $w)
+        $null = Wait-PageRequest $server
+
+        $gone = $false
+        $deadline = (Get-Date).AddSeconds(20)
+        while ((Get-Date) -lt $deadline) {
+            if ((Find-Window $p 'Deferred').Count -eq 0) { $gone = $true; break }
+            Start-Sleep -Milliseconds 200
+        }
+        Check 'then it took itself to the tray' $gone
+        if (-not $gone) { Show-Trace $dir }
+        Check 'and the app is still running' (-not $p.HasExited)
+        Kill-App $p
+    }
+    finally { Stop-PageServer $server }
+
+    # ---------------------------------------------------------------- 17
+    Scenario '17. window-state "min-after-2" opens, then minimizes'
+    $server = Start-PageServer
+    try {
+        # tray off, so "minimize" really means the taskbar
+        $conf = "{ `"url`": `"$($server.Url)`", `"window-state`": `"min-after-2`", `"title`": `"Minner`", `"width`": 620, `"height`": 400, `"sleep-after`": `"off`" }"
+        $dir = New-Case 'min-after-n' $conf
+        $p = Start-App $dir
+
+        $w = Wait-TitledWindow $p 'Minner'
+        Check 'the window opened normally first' ($null -ne $w)
+        Check 'it is not minimized yet' ($null -ne $w -and -not $w.IsMinimized)
+        $null = Wait-PageRequest $server
+
+        $minimized = $false
+        $deadline = (Get-Date).AddSeconds(20)
+        while ((Get-Date) -lt $deadline) {
+            $now = Find-Window $p 'Minner'
+            if ($now.Count -gt 0 -and $now[0].IsMinimized) { $minimized = $true; break }
+            Start-Sleep -Milliseconds 200
+        }
+        Check 'then it minimized itself' $minimized
+        if (-not $minimized) { Show-Trace $dir }
+        Check 'and it is still on the taskbar, not hidden' ((Find-Window $p 'Minner').Count -gt 0)
+        Check 'and the app is still running' (-not $p.HasExited)
+        Kill-App $p
+    }
+    finally { Stop-PageServer $server }
+
+    # ---------------------------------------------------------------- 18
+    Scenario '18. window-state "tray-after-load" waits for the page'
+    $server = Start-PageServer
+    try {
+        $conf = "{ `"url`": `"$($server.Url)`", `"window-state`": `"tray-after-load`", `"systray`": true, `"title`": `"Loaded`", `"width`": 620, `"height`": 400, `"sleep-after`": `"off`" }"
+        $dir = New-Case 'tray-after-load' $conf
+        $p = Start-App $dir
+
+        $w = Wait-TitledWindow $p 'Loaded'
+        Check 'the window opened normally first' ($null -ne $w)
+        Check 'it is still there before the page is served' ((Find-Window $p 'Loaded').Count -gt 0)
+
+        $request = Wait-PageRequest $server
+        Check "the page was asked for after $($server.WaitedSeconds)s ('$request')" ($request -like 'GET /*')
+
+        $gone = $false
+        $deadline = (Get-Date).AddSeconds(45)
+        while ((Get-Date) -lt $deadline) {
+            if ((Find-Window $p 'Loaded').Count -eq 0) { $gone = $true; break }
+            Start-Sleep -Milliseconds 200
+        }
+        Check 'once it had loaded, the window went to the tray' $gone
+        if (-not $gone) { Show-Trace $dir }
+        Check 'and the app is still running' (-not $p.HasExited)
+        Kill-App $p
+    }
+    finally { Stop-PageServer $server }
+
+    # ---------------------------------------------------------------- 19
+    Scenario '19. Touching the page cancels the auto-hide'
+    # The page dispatches a pointerdown at itself shortly after loading, which is
+    # exactly what the injected watcher listens for. No synthetic OS input needed.
+    $poke = '<!doctype html><title>probe</title><h1>ok</h1>' +
+            '<script>addEventListener("load",function(){setTimeout(function(){' +
+            'document.dispatchEvent(new PointerEvent("pointerdown",{bubbles:true}))},400)})</script>'
+    $server = Start-PageServer $poke
+    try {
+        $conf = "{ `"url`": `"$($server.Url)`", `"window-state`": `"tray-after-3`", `"systray`": true, `"title`": `"Sticky`", `"width`": 620, `"height`": 400, `"sleep-after`": `"off`" }"
+        $dir = New-Case 'cancel-autohide' $conf
+        $p = Start-App $dir
+
+        $w = Wait-TitledWindow $p 'Sticky'
+        Check 'the window opened' ($null -ne $w)
+        $request = Wait-PageRequest $server
+        Check "the page was served after $($server.WaitedSeconds)s ('$request')" ($request -like 'GET /*')
+
+        # well past the 3 seconds it would otherwise have hidden at
+        Start-Sleep -Seconds 9
+        $stayed = (Find-Window $p 'Sticky').Count -gt 0
+        Check 'the window is still on screen' $stayed
+        if (-not $stayed) { Show-Trace $dir }
+        Check 'and it is not minimized either' ((Find-Window $p 'Sticky')[0].IsMinimized -eq $false)
+        Kill-App $p
+    }
+    finally { Stop-PageServer $server }
+
+    # ---------------------------------------------------------------- 20
+    Scenario '20. Resizing shows the size in the title, then hides it'
     $conf = "{ `"url`": `"$Fast`", `"width`": 700, `"height`": 500, `"title`": `"Sizer`", `"loading-indicator`": `"off`", `"sleep-after`": `"off`" }"
     $dir = New-Case 'resize' $conf
     $p = Start-App $dir
@@ -561,8 +800,8 @@ try {
     }
     $null = Stop-App $p
 
-    # ---------------------------------------------------------------- 15
-    Scenario '15. show-size-on-resize false leaves the title alone'
+    # ---------------------------------------------------------------- 21
+    Scenario '21. show-size-on-resize false leaves the title alone'
     $conf = "{ `"url`": `"$Fast`", `"width`": 700, `"height`": 500, `"title`": `"NoSize`", `"show-size-on-resize`": false, `"loading-indicator`": `"off`", `"sleep-after`": `"off`" }"
     $dir = New-Case 'no-resize-size' $conf
     $p = Start-App $dir
@@ -585,8 +824,8 @@ try {
     }
     $null = Stop-App $p
 
-    # ---------------------------------------------------------------- 16
-    Scenario '16. With the tray on, Close hides instead of quitting'
+    # ---------------------------------------------------------------- 22
+    Scenario '22. With the tray on, Close hides instead of quitting'
     $conf = "{ `"url`": `"$Fast`", `"window-type`": `"min+max+close+tray`", `"systray`": true, `"title`": `"TrayClose`", `"single-instance-action`": `"focus`", `"sleep-after`": `"off`" }"
     $dir = New-Case 'tray-close' $conf
     $p = Start-App $dir
@@ -615,8 +854,8 @@ try {
     }
     Kill-App $p
 
-    # ---------------------------------------------------------------- 17
-    Scenario '17. Minimize goes to the tray when minimize-to-tray is on'
+    # ---------------------------------------------------------------- 23
+    Scenario '23. Minimize goes to the tray when minimize-to-tray is on'
     $conf = "{ `"url`": `"$Fast`", `"window-type`": `"min+max+close+tray`", `"systray`": true, `"minimize-to-tray`": true, `"title`": `"TrayMin`", `"sleep-after`": `"off`" }"
     $dir = New-Case 'tray-min' $conf
     $p = Start-App $dir
@@ -632,12 +871,12 @@ try {
     }
     Kill-App $p
 
-    # ---------------------------------------------------------------- 18
+    # ---------------------------------------------------------------- 24
     if (-not $IncludeSlow) {
-        Scenario '18. sleep-after frees the browser  (skipped, pass -IncludeSlow)'
+        Scenario '24. sleep-after frees the browser  (skipped, pass -IncludeSlow)'
     }
     else {
-        Scenario '18. sleep-after frees the browser while the window is hidden'
+        Scenario '24. sleep-after frees the browser while the window is hidden'
         # "focus" so that starting a second copy wakes the sleeping one instead of
         # showing the "already running" error box.
         $conf = "{ `"url`": `"$Fast`", `"window-type`": `"min+max+close+tray`", `"systray`": true, `"title`": `"Sleeper`", `"single-instance-action`": `"focus`", `"sleep-after`": 1 }"
@@ -678,7 +917,10 @@ try {
             if (-not $second.WaitForExit(15000)) { Kill-App $second }
             Check 'the waking copy exited quietly' ($second.HasExited -and $second.ExitCode -eq 0) "got '$($second.ExitCode)'"
             $woken = @()
-            $deadline = (Get-Date).AddSeconds(40)
+            # Generous on purpose: this asks whether the browser comes back at all,
+            # not how fast. A cold WebView2 start on a machine that has just run the
+            # whole suite can take a while.
+            $deadline = (Get-Date).AddSeconds(90)
             while ((Get-Date) -lt $deadline) {
                 $woken = @(Get-Children $p.Id)
                 if ($woken.Count -gt 0) { break }

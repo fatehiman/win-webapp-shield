@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace WebAppShield;
 
@@ -36,9 +37,21 @@ public sealed class AppConfig
     public string Position { get; set; } = "center";
 
     // ---- F) initial window state ----------------------------------------
-    /// <summary>"normal", "min", "max" or "tray".</summary>
+    /// <summary>
+    /// How the window opens, and optionally what happens to it next:
+    /// "normal", "min", "max", "tray", "tray-after-load", "min-after-load",
+    /// "tray-after-&lt;seconds&gt;", "min-after-&lt;seconds&gt;".
+    /// </summary>
     [JsonPropertyName("window-state")]
     public string WindowState { get; set; } = "normal";
+
+    /// <summary>
+    /// Start the embedded browser and load the page at startup even when the window
+    /// opens hidden in the tray. Off means nothing is loaded until the window is
+    /// opened for the first time, which is lighter but leaves the page cold.
+    /// </summary>
+    [JsonPropertyName("preload")]
+    public bool Preload { get; set; } = true;
 
     // ---- G) icon ---------------------------------------------------------
     /// <summary>.ico file, absolute or relative to the exe folder. Empty = Windows default.</summary>
@@ -131,7 +144,12 @@ public sealed class AppConfig
     /// <summary>H) says: if any other setting implies the tray, the tray is on.</summary>
     [JsonIgnore]
     public bool TrayEnabled => Systray || CloseToTray
-                               || string.Equals(WindowState, "tray", StringComparison.OrdinalIgnoreCase);
+                               || Startup.Initial == StartupWindow.Tray
+                               || Startup.Then == StartupThen.Tray;
+
+    /// <summary>window-state, split into "how it opens" and "what happens next".</summary>
+    [JsonIgnore]
+    public StartupPlan Startup => ParseStartup(WindowState);
 
     [JsonIgnore]
     public string EffectiveTitle => string.IsNullOrWhiteSpace(Title) ? Program.ExeName : Title;
@@ -168,8 +186,13 @@ public sealed class AppConfig
             }
         }
 
-        if (!IsOneOf(WindowState, "normal", "min", "max", "tray"))
-            problems.Add($"\"window-state\" must be normal, min, max or tray (got \"{WindowState}\").");
+        if (!Startup.IsValid)
+        {
+            problems.Add($"\"window-state\" must be normal, min, max, tray, " +
+                         "tray-after-load, min-after-load, or tray-after-<seconds> / " +
+                         $"min-after-<seconds> up to {StartupPlan.MaxSeconds} " +
+                         $"(got \"{WindowState}\").");
+        }
 
         if (!IsOneOf(Position, "center", "last") && ParsePoint(Position) is null)
             problems.Add($"\"position\" must be center, last or \"x,y\" (got \"{Position}\").");
@@ -200,6 +223,45 @@ public sealed class AppConfig
     private static bool IsOneOf(string? value, params string[] allowed)
         => allowed.Any(a => string.Equals(value?.Trim(), a, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// Reads the window-state setting. Anything not understood comes back with
+    /// IsValid false and the safe "normal" plan, so Validate can report it and the
+    /// app can carry on.
+    /// </summary>
+    public static StartupPlan ParseStartup(string? value)
+    {
+        var text = (value ?? "").Trim();
+        if (text.Length == 0) return StartupPlan.Normal;
+
+        switch (text.ToLowerInvariant())
+        {
+            case "normal": return StartupPlan.Normal;
+            case "min": return new StartupPlan(StartupWindow.Minimized, StartupThen.None, null, false, true);
+            case "max": return new StartupPlan(StartupWindow.Maximized, StartupThen.None, null, false, true);
+            case "tray": return new StartupPlan(StartupWindow.Tray, StartupThen.None, null, false, true);
+        }
+
+        // tray-after-load, min-after-load, tray-after-10, min-after-2.5
+        var match = StartupPlan.DeferredPattern.Match(text);
+        if (!match.Success) return StartupPlan.Invalid;
+
+        var then = match.Groups[1].Value.Equals("tray", StringComparison.OrdinalIgnoreCase)
+            ? StartupThen.Tray
+            : StartupThen.Minimize;
+
+        var when = match.Groups[2].Value;
+        if (when.Equals("load", StringComparison.OrdinalIgnoreCase))
+            return new StartupPlan(StartupWindow.Normal, then, null, true, true);
+
+        if (!double.TryParse(when, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double seconds))
+            return StartupPlan.Invalid;
+
+        if (seconds < 0 || seconds > StartupPlan.MaxSeconds) return StartupPlan.Invalid;
+
+        return new StartupPlan(StartupWindow.Normal, then, seconds, false, true);
+    }
+
     public static Point? ParsePoint(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
@@ -218,6 +280,54 @@ public sealed class AppConfig
             return (int)Math.Round(m);
         return null;
     }
+}
+
+/// <summary>How the window looks the moment it opens.</summary>
+public enum StartupWindow
+{
+    Normal,
+    Minimized,
+    Maximized,
+    /// <summary>Never drawn at all; it lives in the notification area.</summary>
+    Tray
+}
+
+/// <summary>What happens to the window a little after it has opened.</summary>
+public enum StartupThen
+{
+    None,
+    Tray,
+    Minimize
+}
+
+/// <summary>
+/// The window-state setting, read apart. "tray-after-10" opens a normal window and
+/// then hides it, which is not the same thing as opening hidden, so the two halves
+/// are kept separate.
+/// </summary>
+public sealed record StartupPlan(
+    StartupWindow Initial,
+    StartupThen Then,
+    double? AfterSeconds,
+    bool AfterLoad,
+    bool IsValid)
+{
+    /// <summary>A day. Long enough for anything sensible, short enough to catch typos.</summary>
+    public const double MaxSeconds = 86_400;
+
+    public static readonly StartupPlan Normal =
+        new(StartupWindow.Normal, StartupThen.None, null, false, true);
+
+    /// <summary>Not understood. Behaves as "normal" so the app still starts.</summary>
+    public static readonly StartupPlan Invalid =
+        new(StartupWindow.Normal, StartupThen.None, null, false, false);
+
+    public static readonly Regex DeferredPattern = new(
+        @"^(tray|min)-after-(load|\d+(?:\.\d+)?)$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    /// <summary>True when something is supposed to happen after the window opens.</summary>
+    public bool HasDeferredAction => Then != StartupThen.None;
 }
 
 /// <summary>Lets a setting be written either as "120" or as 120 in the JSON file.</summary>

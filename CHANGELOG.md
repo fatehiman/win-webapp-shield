@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.5.0 - 2026-09-06
+
+### Fixed
+
+- `"window-state": "tray"` never loaded the page. The browser was left cold until the
+  window was opened for the first time, which made the mode useless for anything you
+  want ready and waiting. It now loads while the window stays hidden.
+
+### Added
+
+- `preload` (default `true`) turns that off again, for when a cold start matters more
+  than a ready page. Measured on one machine with a simple page: `true` costs about
+  366 MB across the wrapper and 6 browser processes, `false` about 47 MB for the
+  wrapper alone. `sleep-after` hands that back once the window has been out of sight
+  long enough.
+- Four more `window-state` values, which open a **normal** window and then get it out
+  of the way by themselves: `tray-after-load`, `min-after-load`,
+  `tray-after-<seconds>` and `min-after-<seconds>`. So the page loads in a real
+  window, and the window leaves once it is done.
+
+### Notes
+
+- The waiting forms back off if you are using the window. Clicking, typing or
+  scrolling in the page, clicking the frame, or moving or resizing the window cancels
+  the hide for good.
+- Catching a click on the page needs a three line listener added to it: the browser
+  fills the client area and swallows the mouse and keyboard, so the window itself
+  never sees one. It is only added while an auto-hide is pending, registered before
+  the first navigation so the first document is covered, and removed once the hide is
+  settled.
+- `-after-load` counts a failed navigation as loaded, and gives up waiting after 60
+  seconds, so a page that never reports finishing cannot pin the window on screen.
+- `min-after-<n>` does what pressing Minimize does, so `minimize-to-tray` still
+  decides whether that means the taskbar or the tray.
+- An unreadable `window-state` is reported by the startup warning and treated as
+  `normal`, the same as every other setting.
+
+### Debugging
+
+- Set the environment variable `WWS_TRACE` to anything and the app appends a line to
+  `<exename>.trace.log` next to the exe for the things that are hard to see from
+  outside: the startup plan it read, whether the deferred action ran, what cancelled
+  it, when the browser was dropped for sleep, and when the window was shown. Off and
+  free otherwise.
+
+### Tests
+
+- The suite now runs a loopback TCP server as a stand-in web site, so "did the wrapper
+  actually fetch its URL" is answered by the request arriving rather than by a
+  screenshot. That is what proves the tray fix, and `preload: false` still not
+  fetching. It also lets a scenario serve its own HTML, which is how the
+  cancel-on-interaction check fires a real `pointerdown` in the page with no synthetic
+  OS input.
+
 ## 1.4.0 - 2026-09-06
 
 ### Added

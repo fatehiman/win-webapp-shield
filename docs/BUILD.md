@@ -120,12 +120,18 @@ can never disagree about the file format.
 .\tools\smoke-test.ps1 -IncludeSlow # about 4 minutes, adds the sleep/wake test
 ```
 
-The script starts the real exe with 18 different `.conf` files and checks what Windows
+The script starts the real exe with 24 different `.conf` files and checks what Windows
 actually created: window styles read back with `GetWindowLong`, whether the close
 button carries `CS_NOCLOSE`, window size and position in pixels, process exit codes,
 the `.session` file contents, the `WASENC1` header, every frame of the loading
 spinner, the size shown while resizing, and the browser child processes before and
 after a sleep. Nothing is mocked.
+
+Some scenarios run a loopback TCP server as a stand-in web site. That answers
+questions no screenshot can — whether the wrapper really fetched its URL while sitting
+in the tray, for one — and lets a scenario serve its own HTML, which is how the
+cancel-on-interaction check fires a real `pointerdown` inside the page without
+synthesising OS input.
 
 ```
 == 14. sleep-after frees the browser while the window is hidden
@@ -134,10 +140,32 @@ after a sleep. Nothing is mocked.
   [pass] memory dropped (56.9 MB -> 10.5 MB)
   [pass] opening it again restarted the browser (found 1)
 
-passed: 65   failed: 0
+passed: 92   failed: 0
 ```
 
 Add `-KeepFiles` to keep the temporary folders (with any `app.error.log`) for a look.
+
+## When something is hard to see from outside
+
+Set `WWS_TRACE` to anything before starting a wrapped app and it appends to
+`<exename>.trace.log` next to the exe:
+
+```powershell
+$env:WWS_TRACE = 1
+.\mstodo.exe
+```
+
+```
+17:33:07.739  startup plan: initial=Normal then=Tray afterSeconds= afterLoad=True
+17:33:09.102  showing the window
+17:33:11.240  deferred window action running: Tray
+```
+
+It records the `window-state` plan the app read, whether the deferred tray/minimize
+ran, what cancelled it if it did not, when the browser was dropped for sleep, and when
+the window was shown. The smoke test turns it on and prints the file when a startup
+timing check fails, which is how a real bug gets told apart from someone clicking the
+window mid-run.
 
 ## Continuous integration
 
@@ -145,7 +173,7 @@ Add `-KeepFiles` to keep the temporary folders (with any `app.error.log`) for a 
 `windows-latest` for every push, and uploads `dist` as a build artifact. Pushing a tag
 like `v1.0.0` also creates a GitHub release with a zip attached.
 
-The encryption round trip, the `setup.exe` check and the 65 fast smoke-test checks are
+The encryption round trip, the `setup.exe` check and the 86 fast smoke-test checks are
 all hard gates there — the hosted Windows runner does give a real desktop session, so
 the window checks work. The sleep/wake test (`-IncludeSlow`) needs minutes of real
 waiting, so run that one locally before cutting a release.

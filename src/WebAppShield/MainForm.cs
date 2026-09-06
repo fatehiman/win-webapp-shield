@@ -61,6 +61,21 @@ public sealed class MainForm : Form
 
     private bool _initialShowHandled;
     private readonly bool _startHidden;
+
+    /// <summary>window-state, read apart into "how it opens" and "what happens next".</summary>
+    private readonly StartupPlan _startup;
+
+    /// <summary>Fires the deferred tray/minimize for the "-after-&lt;seconds&gt;" forms.</summary>
+    private System.Windows.Forms.Timer? _deferredTimer;
+
+    /// <summary>Still waiting to hide or minimize the window after startup.</summary>
+    private bool _deferredPending;
+
+    /// <summary>The first page load has finished, whether it worked or not.</summary>
+    private bool _firstLoadDone;
+
+    /// <summary>Set once the browser has been started for a hidden window.</summary>
+    private bool _preloadStarted;
     private bool _hiddenInTray;
     private bool _exiting;
     private bool _webBusy;
@@ -79,7 +94,9 @@ public sealed class MainForm : Form
         // Remember it now: the user may close the window before the browser has even
         // finished starting, and the session file should still know where we were.
         RememberUrl(_currentUrl);
-        _startHidden = cfg.WindowState.Trim().Equals("tray", StringComparison.OrdinalIgnoreCase);
+        _startup = cfg.Startup;
+        _startHidden = _startup.Initial == StartupWindow.Tray;
+        _deferredPending = _startup.HasDeferredAction;
 
         _baseTitle = cfg.EffectiveTitle;
         _loading = new LoadingIndicator(cfg.LoadingIndicator, RenderLoadingFrame);
@@ -175,7 +192,14 @@ public sealed class MainForm : Form
             // announce a size the user never asked about.
             _lastReportedSize = Bounds.Size;
             EnsureWebView();
+            StartDeferredAction();
         };
+
+        // Grabbing the frame to move or resize the window is the user using it, so an
+        // auto-hide backs off. ResizeBegin is WM_ENTERSIZEMOVE, which covers both and
+        // only ever comes from a real drag - unlike Move, which Windows also raises
+        // while it is positioning the window at startup.
+        ResizeBegin += (_, _) => CancelDeferredAction("the window frame was grabbed");
         ResizeEnd += (_, _) => { RememberBounds(); SaveSession(); };
     }
 
@@ -231,19 +255,21 @@ public sealed class MainForm : Form
 
     private void ApplyStartState()
     {
-        string state = (_cfg.WindowState ?? "normal").Trim().ToLowerInvariant();
-        switch (state)
+        switch (_startup.Initial)
         {
-            case "max":
+            case StartupWindow.Maximized:
                 _restoreState = FormWindowState.Maximized;
                 WindowState = FormWindowState.Maximized;
                 break;
-            case "min":
+
+            case StartupWindow.Minimized:
                 WindowState = FormWindowState.Minimized;
                 break;
-            case "tray":
+
+            case StartupWindow.Tray:
                 _hiddenInTray = true;
                 break;
+
             default:
                 // "last" position may also restore a maximized window
                 if ((_cfg.Position ?? "").Trim().Equals("last", StringComparison.OrdinalIgnoreCase) &&
@@ -254,6 +280,130 @@ public sealed class MainForm : Form
                 }
                 break;
         }
+    }
+
+    // ------------------------------------------------- deferred tray / minimize
+
+    /// <summary>
+    /// Starts the clock for "tray-after-10" and friends. Called once the window is on
+    /// screen, so the countdown measures how long the user has actually been looking
+    /// at it.
+    /// </summary>
+    private void StartDeferredAction()
+    {
+        if (!_deferredPending) return;
+
+        TraceLog.Log($"startup plan: initial={_startup.Initial} then={_startup.Then} " +
+                     $"afterSeconds={_startup.AfterSeconds} afterLoad={_startup.AfterLoad}");
+
+        if (_startup.AfterLoad)
+        {
+            // The load may already have finished while the window was appearing.
+            if (_firstLoadDone) { RunDeferredAction(); return; }
+
+            // Safety net: a page that never reports it finished must not keep the
+            // window on screen for ever when the config asked for it to go away.
+            _deferredTimer = NewDeferredTimer(LoadWaitFallbackMs);
+        }
+        else
+        {
+            _deferredTimer = NewDeferredTimer((int)Math.Round((_startup.AfterSeconds ?? 0) * 1000));
+        }
+
+        _deferredTimer.Start();
+    }
+
+    /// <summary>How long "-after-load" waits before giving up and acting anyway.</summary>
+    private const int LoadWaitFallbackMs = 60_000;
+
+    private System.Windows.Forms.Timer NewDeferredTimer(int milliseconds)
+    {
+        // A zero interval is not allowed, and "after 0 seconds" means "right away".
+        var timer = new System.Windows.Forms.Timer { Interval = Math.Max(1, milliseconds) };
+        timer.Tick += (_, _) => RunDeferredAction();
+        return timer;
+    }
+
+    /// <summary>The user did something with the window, so leave it alone.</summary>
+    private void CancelDeferredAction(string reason)
+    {
+        if (!_deferredPending) return;
+        _deferredPending = false;
+        StopDeferredTimer();
+        RemoveInteractionWatcher();
+        TraceLog.Log("deferred window action cancelled: " + reason);
+    }
+
+    private void StopDeferredTimer()
+    {
+        if (_deferredTimer is null) return;
+        _deferredTimer.Stop();
+        _deferredTimer.Dispose();
+        _deferredTimer = null;
+    }
+
+    private void RunDeferredAction()
+    {
+        if (!_deferredPending) return;
+        _deferredPending = false;
+        TraceLog.Log($"deferred window action running: {_startup.Then}");
+        StopDeferredTimer();
+        RemoveInteractionWatcher();
+
+        switch (_startup.Then)
+        {
+            case StartupThen.Tray:
+                HideToTray();
+                break;
+
+            case StartupThen.Minimize:
+                // Deliberately the same as pressing Minimize, so minimize-to-tray
+                // still decides whether that means the taskbar or the notification
+                // area. OnResize does the rest.
+                WindowState = FormWindowState.Minimized;
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Watches for the user touching the page, so an auto-hide does not snatch the
+    /// window away mid-use.
+    ///
+    /// The window itself never sees these: the browser fills the whole client area and
+    /// swallows the mouse and the keyboard, so there is no WM_LBUTTONDOWN to catch.
+    /// A three line listener in the page is the only reliable way to hear about it.
+    /// It is only injected while an auto-hide is actually pending, and removed as soon
+    /// as that is settled.
+    /// </summary>
+    private const string InteractionScript =
+        "(function(){var s=function(){try{window.chrome.webview.postMessage('user-active')}catch(e){}};" +
+        "['pointerdown','keydown','wheel'].forEach(function(n){" +
+        "addEventListener(n,s,{capture:true,once:true,passive:true})})})()";
+
+    private string? _interactionScriptId;
+
+    private async Task AddInteractionWatcherAsync(CoreWebView2 core)
+    {
+        if (!_deferredPending) return;
+        try
+        {
+            _interactionScriptId = await core.AddScriptToExecuteOnDocumentCreatedAsync(InteractionScript);
+        }
+        catch (Exception ex)
+        {
+            // Without it the auto-hide simply cannot be cancelled from inside the
+            // page. Not worth troubling the user about.
+            TraceLog.Log("could not add the interaction watcher: " + ex.Message);
+        }
+    }
+
+    private void RemoveInteractionWatcher()
+    {
+        if (_interactionScriptId is null) return;
+        var id = _interactionScriptId;
+        _interactionScriptId = null;
+        try { _web?.CoreWebView2?.RemoveScriptToExecuteOnDocumentCreated(id); }
+        catch { /* the browser may already be gone */ }
     }
 
     private void BuildTray()
@@ -364,6 +514,7 @@ public sealed class MainForm : Form
             core.NavigationStarting += OnNavigationStarting;
             core.NavigationCompleted += OnNavigationCompleted;
             core.DOMContentLoaded += (_, _) => RevealPage();
+            core.WebMessageReceived += OnWebMessageReceived;
             core.SourceChanged += (_, _) => RememberUrl(core.Source);
             core.DocumentTitleChanged += (_, _) => { /* the conf title wins, nothing to do */ };
             core.ProcessFailed += OnProcessFailed;
@@ -390,6 +541,10 @@ public sealed class MainForm : Form
             _navigating = true;
             _startingBrowser = false;
             UpdateLoadingState();
+
+            // Registered before navigating on purpose: a script added afterwards only
+            // reaches the next document, and the first one is the one that matters.
+            await AddInteractionWatcherAsync(core);
 
             core.Navigate(_currentUrl);
         }
@@ -482,6 +637,23 @@ public sealed class MainForm : Form
         _navigating = false;
         UpdateLoadingState();
         RevealPage();   // also covers a page that failed to load: show its error page
+
+        if (_firstLoadDone) return;
+        _firstLoadDone = true;
+
+        // "tray-after-load" waits for exactly this. A page that failed still counts:
+        // the alternative is a window that hangs around for ever.
+        if (_deferredPending && _startup.AfterLoad && Visible) RunDeferredAction();
+    }
+
+    /// <summary>The page reported that the user touched it. See InteractionScript.</summary>
+    private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        string message;
+        try { message = e.TryGetWebMessageAsString(); }
+        catch { return; }   // not one of ours
+
+        if (message == "user-active") CancelDeferredAction("the page was clicked or typed in");
     }
 
     private void OnNewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
@@ -521,6 +693,7 @@ public sealed class MainForm : Form
     /// <summary>Drop the embedded browser and hand the memory back to Windows.</summary>
     private void SleepNow()
     {
+        TraceLog.Log("sleep timer reached, dropping the browser");
         if (_web is null) { _sleep.MarkAsleep(); return; }
         if (Visible && WindowState != FormWindowState.Minimized) return;   // safety net
 
@@ -539,6 +712,7 @@ public sealed class MainForm : Form
 
     private void ShowFromTray()
     {
+        TraceLog.Log("showing the window");
         _hiddenInTray = false;
         if (!Visible) Show();
         if (WindowState == FormWindowState.Minimized) WindowState = _restoreState;
@@ -619,6 +793,17 @@ public sealed class MainForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+
+        // A window that opens straight into the tray is never shown, so the Shown
+        // handler that normally starts the browser never runs. Start it here instead,
+        // once the message loop is going, so the page is loaded and waiting when the
+        // user finally opens the window.
+        if (_startHidden && _cfg.Preload && !_preloadStarted)
+        {
+            _preloadStarted = true;
+            BeginInvoke(new Action(() => EnsureWebView()));
+        }
+
         if (_cfg.HasTitleBar && !_cfg.ShowClose)
         {
             var menu = NativeMethods.GetSystemMenu(Handle, false);
@@ -722,6 +907,7 @@ public sealed class MainForm : Form
         _loading?.Dispose();
         _revealFallback?.Dispose();
         _resizeHideTimer?.Dispose();
+        _deferredTimer?.Dispose();
         DisposeWebView();
         _uiMarshal.Dispose();
         base.OnFormClosed(e);
@@ -729,6 +915,14 @@ public sealed class MainForm : Form
 
     protected override void WndProc(ref Message m)
     {
+        // Clicking the title bar or a border counts as using the window too, and that
+        // does reach us, unlike a click on the page.
+        if (_deferredPending && m.Msg is NativeMethods.WM_NCLBUTTONDOWN
+            or NativeMethods.WM_LBUTTONDOWN or NativeMethods.WM_KEYDOWN)
+        {
+            CancelDeferredAction($"window message 0x{m.Msg:X4} (a click or a key)");
+        }
+
         // Borderless windows still need resize borders.
         if (m.Msg == NativeMethods.WM_NCHITTEST && !_cfg.HasTitleBar && _cfg.Resizable
             && WindowState == FormWindowState.Normal)

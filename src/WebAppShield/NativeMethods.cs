@@ -6,6 +6,9 @@ internal static class NativeMethods
 {
     // ---- window messages / hit test --------------------------------------
     public const int WM_NCHITTEST = 0x0084;
+    public const int WM_NCLBUTTONDOWN = 0x00A1;
+    public const int WM_LBUTTONDOWN = 0x0201;
+    public const int WM_KEYDOWN = 0x0100;
     public const int WM_SYSCOMMAND = 0x0112;
     public const int WM_QUERYENDSESSION = 0x0011;
     public const int WM_ENDSESSION = 0x0016;

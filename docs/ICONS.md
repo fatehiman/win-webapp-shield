@@ -32,7 +32,7 @@ That gives you `dist\mstodo.exe`, `dist\mstodo.ico` and a `dist\mstodo.conf` who
 `webappshield.exe` — from a release, say — `set-icon.exe` does the same to it:
 
 ```
-C:pps\mstodo    mstodo.exe        <- webappshield.exe, renamed
+C:\apps\mstodo    mstodo.exe        <- webappshield.exe, renamed
     mstodo.ico        <- made by make-app-icon.ps1, or any .ico
     mstodo.conf
     set-icon.exe
@@ -41,8 +41,8 @@ C:pps\mstodo    mstodo.exe        <- webappshield.exe, renamed
 Double click `set-icon.exe`, or run it from a prompt:
 
 ```
-Icon : C:pps\mstodo\mstodo.ico
-Exe  : C:pps\mstodo\mstodo.exe
+Icon : C:\apps\mstodo\mstodo.ico
+Exe  : C:\apps\mstodo\mstodo.exe
        16x16 32-bit BMP
        ...
        256x256 32-bit PNG
