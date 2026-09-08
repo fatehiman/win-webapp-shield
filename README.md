@@ -236,6 +236,8 @@ handles it:
 - When the limit is reached, the whole WebView2 process tree is shut down and the
   memory is returned to Windows.
 - Open the window again and the browser starts up on the same page you were on.
+- While it is asleep the tray icon shows a small gray dot in the top right corner,
+  so you can tell a sleeping app from an awake one.
 
 | value | meaning |
 |---|---|

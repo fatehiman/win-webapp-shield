@@ -312,6 +312,10 @@ When the limit is reached the app shuts down the whole WebView2 process tree, fo
 garbage collection and trims its working set. Opening the window again starts the
 browser and loads the page you were on.
 
+While the app is asleep the tray icon gets a small **gray dot** in its top right
+corner, and its tooltip ends with `- sleeping`. Both go away as soon as the window is
+opened again.
+
 | value | meaning |
 |---|---|
 | `"auto"` | free RAM below 20 % → 10 minutes. Otherwise 120 minutes. |

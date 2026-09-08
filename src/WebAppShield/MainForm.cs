@@ -25,6 +25,12 @@ public sealed class MainForm : Form
     private WebView2? _web;
     private Label? _status;
     private NotifyIcon? _tray;
+
+    /// <summary>Tray icon while the app is awake. Not ours to dispose.</summary>
+    private Icon? _trayAwakeIcon;
+
+    /// <summary>Same icon with the gray "asleep" dot. Built once, on first sleep.</summary>
+    private Icon? _trayAsleepIcon;
     private SleepManager _sleep = null!;
     private LoadingIndicator _loading = null!;
 
@@ -420,15 +426,52 @@ public sealed class MainForm : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("E&xit", null, (_, _) => ExitApp()));
 
+        _trayAwakeIcon = Icon ?? SystemIcons.Application;
+
         _tray = new NotifyIcon
         {
-            Icon = Icon ?? SystemIcons.Application,
+            Icon = _trayAwakeIcon,
             Text = Truncate(_cfg.EffectiveTitle, 63),
             ContextMenuStrip = menu,
             Visible = true
         };
         _tray.DoubleClick += (_, _) => ShowFromTray();
         _tray.MouseUp += (_, e) => { if (e.Button == MouseButtons.Left) ShowFromTray(); };
+
+        UpdateTrayIcon();
+    }
+
+    /// <summary>
+    /// Keeps the tray icon in step with the sleep state: a gray dot in the corner while
+    /// the app is asleep, the plain icon while it is awake.
+    /// </summary>
+    private void UpdateTrayIcon()
+    {
+        if (_tray is null || _trayAwakeIcon is null) return;
+
+        bool asleep = _sleep is not null && _sleep.IsAsleep;
+        if (asleep) _trayAsleepIcon ??= TrayBadge.WithSleepDot(_trayAwakeIcon);
+
+        var wanted = asleep ? _trayAsleepIcon ?? _trayAwakeIcon : _trayAwakeIcon;
+        if (!ReferenceEquals(_tray.Icon, wanted)) _tray.Icon = wanted;
+
+        UpdateTrayTip();
+    }
+
+    /// <summary>
+    /// The one place the tray tooltip is built. It says "loading..." while a page is on
+    /// its way and "sleeping" while the browser is gone, so the dot has words to match.
+    /// </summary>
+    private void UpdateTrayTip()
+    {
+        if (_tray is null) return;
+
+        string tip = _baseTitle;
+        if (_loadingFrame is not null) tip += " - loading...";
+        else if (_sleep is not null && _sleep.IsAsleep) tip += " - sleeping";
+
+        tip = Truncate(tip, 63);
+        if (_tray.Text != tip) _tray.Text = tip;
     }
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max];
@@ -458,13 +501,9 @@ public sealed class MainForm : Form
             _status.Text = frame is null ? "Loading..." : "Loading  " + frame;
 
         // The tray tooltip only says whether it is busy: rewriting it 8 times a
-        // second would make Windows rebuild the tooltip for nothing.
-        if (_tray is not null)
-        {
-            string tip = frame is null ? _baseTitle : _baseTitle + " - loading...";
-            tip = Truncate(tip, 63);
-            if (_tray.Text != tip) _tray.Text = tip;
-        }
+        // second would make Windows rebuild the tooltip for nothing, so UpdateTrayTip
+        // writes only when the text really changed.
+        UpdateTrayTip();
     }
 
     private void UpdateLoadingState() => _loading.SetBusy(_startingBrowser || _navigating);
@@ -694,12 +733,13 @@ public sealed class MainForm : Form
     private void SleepNow()
     {
         TraceLog.Log("sleep timer reached, dropping the browser");
-        if (_web is null) { _sleep.MarkAsleep(); return; }
+        if (_web is null) { _sleep.MarkAsleep(); UpdateTrayIcon(); return; }
         if (Visible && WindowState != FormWindowState.Minimized) return;   // safety net
 
         StopLoadingSpinner();
         DisposeWebView();
         _sleep.MarkAsleep();
+        UpdateTrayIcon();
         SaveSession();
 
         GC.Collect();
@@ -720,6 +760,7 @@ public sealed class MainForm : Form
         NativeMethods.SetForegroundWindow(Handle);
 
         _sleep.MarkActive();
+        UpdateTrayIcon();
         EnsureWebView();
     }
 
@@ -826,6 +867,7 @@ public sealed class MainForm : Form
         {
             _restoreState = WindowState;
             _sleep?.MarkActive();
+            UpdateTrayIcon();
             ReportSize();
             if (Visible) EnsureWebView();
         }
@@ -903,6 +945,8 @@ public sealed class MainForm : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         if (_tray is not null) { _tray.Visible = false; _tray.Dispose(); _tray = null; }
+        _trayAsleepIcon?.Dispose();
+        _trayAsleepIcon = null;
         _sleep?.Dispose();
         _loading?.Dispose();
         _revealFallback?.Dispose();

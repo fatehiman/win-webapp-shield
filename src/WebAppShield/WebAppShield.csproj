@@ -23,6 +23,14 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <DebugType>none</DebugType>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!--
+      WinForms + WebView2 raise WM_INPUTLANGCHANGE when the keyboard layout changes,
+      including when the window wakes from sleep. Handling that message calls
+      CultureInfo.GetCultureInfo(int), which throws CultureNotFoundException in
+      globalization-invariant mode. Allowing non-predefined culture names avoids the
+      crash without giving up InvariantGlobalization's smaller build.
+    -->
+    <PredefinedCulturesOnly>false</PredefinedCulturesOnly>
 
     <Version>1.0.0</Version>
     <Company>win-webapp-shield</Company>

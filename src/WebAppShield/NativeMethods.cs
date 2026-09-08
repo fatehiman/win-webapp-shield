@@ -46,6 +46,12 @@ internal static class NativeMethods
     public const uint MF_BYCOMMAND = 0x0000;
     public const uint MF_GRAYED = 0x0001;
 
+    // ---- icons -----------------------------------------------------------
+    /// <summary>Frees an icon handle made by Bitmap.GetHicon.</summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool DestroyIcon(IntPtr hIcon);
+
     // ---- memory ----------------------------------------------------------
     [StructLayout(LayoutKind.Sequential)]
     public struct MEMORYSTATUSEX

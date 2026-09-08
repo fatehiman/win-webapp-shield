@@ -7,6 +7,12 @@
 - `"window-state": "tray"` never loaded the page. The browser was left cold until the
   window was opened for the first time, which made the mode useless for anything you
   want ready and waiting. It now loads while the window stays hidden.
+- A crash on waking the window from the tray (and sometimes at startup):
+  `CultureNotFoundException` from `WmInputLangChange`. Windows sends an
+  input-language-changed message to the window, and WinForms' handling of it doesn't
+  work with the smaller, `InvariantGlobalization` build we ship. Fixed by relaxing
+  that mode just enough (`PredefinedCulturesOnly=false`) to stop the crash, without
+  giving up the smaller build.
 
 ### Added
 
@@ -15,6 +21,9 @@
   366 MB across the wrapper and 6 browser processes, `false` about 47 MB for the
   wrapper alone. `sleep-after` hands that back once the window has been out of sight
   long enough.
+- A gray dot on the tray icon while the app is asleep, so it is clear at a glance
+  that the window is only a click away but the browser is gone. The tray tooltip says
+  `- sleeping` too.
 - Four more `window-state` values, which open a **normal** window and then get it out
   of the way by themselves: `tray-after-load`, `min-after-load`,
   `tray-after-<seconds>` and `min-after-<seconds>`. So the page loads in a real
